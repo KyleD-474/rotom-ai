@@ -20,8 +20,8 @@ from app.core.logger import get_logger
 from app.core.session.store import InMemorySessionStore
 from app.capabilities.registry import CapabilityRegistry
 
-# NEW IMPORTS
-from app.agents.llm.dummy_llm_client import DummyLLMClient
+# from app.agents.llm.dummy_llm_client import DummyLLMClient
+from app.agents.llm.openai_client import OpenAIClient
 from app.agents.intent.llm_intent_classifier import LLMIntentClassifier
 
 logger = get_logger(__name__, layer="service", component="agent_service")
@@ -36,8 +36,9 @@ class AgentService:
         session_store = InMemorySessionStore()
         registry = CapabilityRegistry()
 
-        # LLM infrastructure (Phase 1)
-        llm_client = DummyLLMClient()
+        # LLM infrastructure
+        # llm_client = DummyLLMClient()
+        llm_client = OpenAIClient()
         available_capabilities = registry.list_capabilities()
 
         intent_classifier = LLMIntentClassifier(

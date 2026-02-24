@@ -3,3 +3,4 @@ uvicorn[standard]
 pydantic
 python-dotenv
 python-json-logger==2.0.7
+openai>=1.0.0

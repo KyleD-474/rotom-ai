@@ -1,5 +1,6 @@
+
 # Rotom AI Orchestration System
-## Architecture Constitution (v1.0)
+## Architecture Constitution (v1.1)
 
 This document defines the structural, behavioral, and dependency rules of the Rotom system.
 All development must adhere to these constraints unless this document is explicitly revised.
@@ -13,7 +14,7 @@ Architecture leads code.
 Rotom is an AI orchestration engine responsible for:
 
 - Interpreting user input
-- Classifying intent
+- Classifying intent (LLM-based as of v1.1)
 - Routing to capabilities
 - Managing execution lifecycle
 - Handling structured failure
@@ -28,6 +29,9 @@ Rotom is NOT:
 - A tightly coupled framework
 
 Rotom is an orchestration core.
+
+LLM-based intent classification was introduced in v1.1.
+Execution remains single-step and deterministic.
 
 ---
 
@@ -68,7 +72,8 @@ Responsibilities:
 Constructs:
 - SessionStore implementation
 - CapabilityRegistry
-- IntentClassifier implementation
+- IntentClassifier implementation (LLM-backed as of v1.1)
+- LLMClient implementation (OpenAIClient currently)
 - RotomCore
 
 Must NOT:
@@ -83,6 +88,7 @@ Must NOT:
 Contains:
 - RotomCore
 - Intent classification abstractions
+- LLM client abstractions
 
 Responsibilities of RotomCore:
 - Orchestration
@@ -107,7 +113,7 @@ Rules:
 - No session awareness
 - No orchestration awareness
 - No persistence awareness
-- No LLM awareness (unless explicitly passed in future)
+- No direct LLM awareness
 
 Allowed:
 - Debug logging
@@ -162,7 +168,8 @@ FastAPI → AgentService → RotomCore
 AgentService constructs:
 - SessionStore implementation
 - CapabilityRegistry
-- IntentClassifier implementation
+- IntentClassifier implementation (LLM-backed as of v1.1)
+- LLMClient implementation
 - RotomCore
 
 RotomCore constructs nothing.
@@ -188,18 +195,19 @@ Session persistence must never leak into capabilities.
 
 ---
 
-# 5. Execution Contract
+# 5. Execution Contract (Updated v1.1)
 
 Execution flow:
 
 1. Receive input
-2. Classify intent
-3. Resolve capability
-4. Execute capability
-5. Catch unhandled exceptions
-6. Produce CapabilityResult
-7. Inject execution timing
-8. Return structured response
+2. LLM classifies intent via structured JSON
+3. Validate capability against registry
+4. Resolve capability
+5. Execute capability
+6. Catch unhandled exceptions
+7. Produce CapabilityResult
+8. Inject execution timing
+9. Return structured response
 
 CapabilityResult is the internal execution contract.
 
@@ -211,6 +219,8 @@ CapabilityResult is the internal execution contract.
 - Structured error logging centralized in RotomCore.
 - Capabilities do not enforce failure policy.
 
+No changes introduced in v1.1.
+
 ---
 
 # 7. Async Policy
@@ -218,9 +228,11 @@ CapabilityResult is the internal execution contract.
 System is currently synchronous.
 
 Async may only be introduced when:
-- LLM integration is added
-- External APIs are introduced
+- Multi-step LLM reasoning loops are added
+- External APIs require concurrency
 - Persistence requires it
+
+v1.1 introduced LLM integration but did NOT introduce async.
 
 Async must be deliberate and documented.
 
@@ -236,16 +248,27 @@ When introduced:
 - Must not leak into capabilities
 - Must not alter execution contract
 
+v1.1 does not introduce persistence changes.
+
 ---
 
-# 9. LLM Integration Policy
+# 9. LLM Integration Policy (Implemented v1.1)
 
 LLM integration must:
 
-- Be abstracted behind an interface (e.g., BaseLLMClient)
-- Be injected into RotomCore
+- Be abstracted behind an interface (BaseLLMClient)
+- Be injected via AgentService
 - Not be hardcoded
 - Preserve testability
+
+Current state (v1.1):
+
+- LLM is used for intent classification only.
+- Structured JSON responses are enforced.
+- Capability validation occurs after LLM output.
+- No iterative reasoning loop yet.
+- No multi-step planning yet.
+- No tool argument injection yet.
 
 RotomCore may orchestrate LLM usage but must not depend on a concrete implementation.
 
@@ -255,6 +278,8 @@ RotomCore may orchestrate LLM usage but must not depend on a concrete implementa
 
 Planned:
 
+- Structured tool call arguments
+- Iterative agent reasoning loop
 - Persistent session memory
 - Multi-step capability chaining
 - Tool + LLM hybrid execution
@@ -289,3 +314,7 @@ If a change requires breaking an invariant:
 3. Then modify implementation.
 
 Architecture leads code.
+
+---
+
+Document Updated: 2026-02-24

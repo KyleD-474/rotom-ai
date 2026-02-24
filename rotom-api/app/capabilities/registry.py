@@ -16,7 +16,7 @@ from app.core.logger import get_logger
 logger = get_logger(__name__, layer="capability", component="registry")
 
 
-# Stores and retrieves capability instances.
+# Stores and retrieves capability instances
 class CapabilityRegistry:
 
     def __init__(self):
@@ -27,10 +27,8 @@ class CapabilityRegistry:
             "summarizer_stub": SummarizerStubCapability(),
         }
 
+    # Retrieve capability by name
     def get(self, name: str):
-        """
-        Retrieve capability by name.
-        """
         capability = self._capabilities.get(name)
 
         if capability:
@@ -52,6 +50,6 @@ class CapabilityRegistry:
 
         return capability
     
-    # Expose available capability names (not instances).
+    # Expose available capability names (not instances)
     def list_capabilities(self) -> list[str]:
         return list(self._capabilities.keys())
