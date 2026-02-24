@@ -105,9 +105,3 @@ Planned architectural expansions:
 -   No premature complexity.
 -   Capabilities remain pure.
 -   Architectural changes require updating ARCHITECTURE.md first.
-
-------------------------------------------------------------------------
-
-## License
-
-This project is licensed under the MIT License.
