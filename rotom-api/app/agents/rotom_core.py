@@ -67,11 +67,12 @@ class RotomCore:
 
         logger.debug(f"Execution started: {capability_name}")
 
-        # Measure execution time
-        start_time = time.perf_counter()
+        
+        start_time = time.perf_counter() # Measure execution time
 
-        # Execute the capability with user_input
+        
         try:
+            # Execute the capability with user_input
             result = capability.execute(user_input)
             error_message = None
 
@@ -93,8 +94,8 @@ class RotomCore:
                 }
             )
 
-        # Capture execution timing
-        end_time = time.perf_counter()
+        
+        end_time = time.perf_counter() # Capture execution timing
         execution_time_ms = (end_time - start_time) * 1000
 
         # Inject execution timing into metadata
