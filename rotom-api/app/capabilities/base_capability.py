@@ -16,6 +16,10 @@ class BaseCapability(ABC):
     Capabilities receive structured arguments.
     They are stateless and deterministic.
     """
+    # Metadata descriptors
+    name: str
+    description: str
+    argument_schema: dict[str, str]
 
     @abstractmethod
     def execute(self, arguments: dict):

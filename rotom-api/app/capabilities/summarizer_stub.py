@@ -15,9 +15,12 @@ logger = get_logger(__name__, layer="capability", component="summarizer_stub")
 
 
 class SummarizerStubCapability(BaseCapability):
-    """
-    Returns placeholder summary.
-    """
+
+    name = "summarizer_stub"
+    description = "Summarize the provided text."
+    argument_schema = {
+        "text": "string - The text to summarize."
+    }
 
     def execute(self, arguments: dict) -> CapabilityResult:
         logger.debug("Summarizer Stub execution started")

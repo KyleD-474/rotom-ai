@@ -118,10 +118,8 @@ class RotomCore:
         result.metadata["execution_time_ms"] = round(execution_time_ms, 2)
         
         # Session injection remains centralized in RotomCore.
-        # Keep session visible internally & inject it into result metadata.
+        # Keep session visible internally.
         result.session_id = session_id
-        if session_id:
-            result.metadata["session_id"] = session_id
         
         logger.debug(f"Execution finished: {capability_name}")
 

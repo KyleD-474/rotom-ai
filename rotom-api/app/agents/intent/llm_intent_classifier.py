@@ -1,6 +1,10 @@
 import json
 from app.agents.intent.base_intent_classifier import BaseIntentClassifier
 from app.agents.llm.base_llm_client import BaseLLMClient
+from app.core.logger import get_logger
+
+
+logger = get_logger(__name__, layer="intent", component="llm_intent_classifier")
 
 
 class LLMIntentClassifier(BaseIntentClassifier):
@@ -11,7 +15,7 @@ class LLMIntentClassifier(BaseIntentClassifier):
     - Build classification prompt
     - Invoke LLM client
     - Enforce strict structured JSON contract
-    - Validate capability against registry list
+    - Validate capability against registry metadata
     - Return structured invocation data
 
     This class:
@@ -21,9 +25,9 @@ class LLMIntentClassifier(BaseIntentClassifier):
     - Does NOT construct dependencies
     """
 
-    def __init__(self, llm_client: BaseLLMClient, available_capabilities: list[str]):
+    def __init__(self, llm_client: BaseLLMClient, tool_metadata: list[dict]):
         self.llm_client = llm_client
-        self.available_capabilities = available_capabilities
+        self.tool_metadata = tool_metadata
 
 
     def classify(self, user_input: str) -> dict:
@@ -43,8 +47,10 @@ class LLMIntentClassifier(BaseIntentClassifier):
 
         raw_output = self.llm_client.generate(prompt)
 
+        logger.info(f"raw_output: {raw_output}")
+
         try:
-            # --- Parse LLM response --- 
+            # --- Parse LLM response ---
             parsed = json.loads(raw_output)
 
             # --- Validate capability field ---
@@ -52,52 +58,66 @@ class LLMIntentClassifier(BaseIntentClassifier):
 
             if not isinstance(capability, str) or not capability.strip():
                 raise ValueError("'capability' must be a non-empty string")
-            
+
             capability = capability.strip()
-            
-            if capability not in self.available_capabilities:
+
+            valid_names = [tool["name"] for tool in self.tool_metadata]
+
+            if capability not in valid_names:
                 raise ValueError(f"Invalid capability returned by LLM: {capability}")
-            
+
             # --- Validate arguments field ---
             arguments = parsed.get("arguments", {})
 
             # Arguments must always be an object
             if not isinstance(arguments, dict):
                 raise ValueError("'arguments' must be a JSON object")
-            
-            # Return structured invocation payload
+
             return {
                 "capability": capability,
                 "arguments": arguments,
             }
 
         except Exception as e:
-            # Keep failure centralized and structured
             raise ValueError(f"Failed to parse LLM intent response: {e}")
+
 
     def _build_prompt(self, user_input: str) -> str:
         """
         Builds the intent classification prompt.
 
-        We now enforce a stricter JSON format that includes arguments.
+        Tool metadata is dynamically injected from the registry.
         """
+
+        tools_section = ""
+
+        for tool in self.tool_metadata:
+            tools_section += f"\nTool: {tool['name']}\n"
+            tools_section += f"Description: {tool['description']}\n"
+            tools_section += "Arguments:\n"
+
+            for arg_name, arg_desc in tool["arguments"].items():
+                tools_section += f"  - {arg_name}: {arg_desc}\n"
 
         return f"""
 You are an intent classifier.
 
-Available capabilities:
-{self.available_capabilities}
+Available tools:
+{tools_section}
 
 Given the user input, respond ONLY with valid JSON in this exact format:
 
 {{
-  "capability": "<capability_name>",
-  "arguments": {{ }}
+  "capability": "<tool_name>",
+  "arguments": {{
+      "<argument_name>": <value>
+  }}
 }}
 
 Rules:
-- "capability" must match one of the available capabilities.
-- "arguments" must always be a JSON object.
+- "capability" must match one of the listed tools.
+- "arguments" must match the defined argument schema for that tool.
+- Do NOT invent argument names.
 - Do NOT include explanations.
 - Do NOT include markdown.
 - Output JSON only.

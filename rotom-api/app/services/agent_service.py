@@ -39,11 +39,11 @@ class AgentService:
         # LLM infrastructure
         # llm_client = DummyLLMClient()
         llm_client = OpenAIClient()
-        available_capabilities = registry.list_capabilities()
+        tool_metadata = registry.list_metadata()
 
         intent_classifier = LLMIntentClassifier(
             llm_client=llm_client,
-            available_capabilities=available_capabilities
+            tool_metadata=tool_metadata
         )
 
         self.rotom_core = RotomCore(

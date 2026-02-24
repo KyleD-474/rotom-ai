@@ -17,6 +17,13 @@ logger = get_logger(__name__, layer="capability", component="echo")
 
 class EchoCapability(BaseCapability):
 
+    # Phase 3: Metadata descriptors
+    name = "echo"
+    description = "Repeat the provided message verbatim."
+    argument_schema = {
+        "message": "string - The message to repeat."
+    }
+
     def execute(self, arguments: dict) -> CapabilityResult:
         logger.debug("Echo execution started")
 
