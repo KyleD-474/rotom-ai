@@ -318,3 +318,100 @@ Architecture leads code.
 ---
 
 Document Updated: 2026-02-24
+
+
+---
+
+## Addendum: v1.2 Structured Invocation Update
+
+The following architectural updates were introduced in v1.2.
+No invariants were modified.
+
+### Structured Invocation Contract
+
+Intent classification now returns:
+
+    {
+        "capability": "<string>",
+        "arguments": { ... }
+    }
+
+This replaces the prior implicit contract of returning only a capability name.
+
+### CapabilityInvocation Model
+
+A new internal domain model was introduced:
+
+- CapabilityInvocation
+
+This model serves as the internal transport object between
+intent classification and capability execution.
+
+It is:
+
+- Framework-agnostic
+- Not an API schema
+- Not tied to FastAPI
+- Not exposed outside core logic
+
+### Updated Execution Contract (v1.2 Clarification)
+
+The execution flow now formally includes structured argument transport:
+
+1. Receive input
+2. LLM classifies intent via structured JSON
+3. Validate invocation structure (`capability` + `arguments`)
+4. Validate capability against registry
+5. Construct CapabilityInvocation
+6. Execute capability with structured arguments
+7. Catch unhandled exceptions
+8. Produce CapabilityResult
+9. Inject execution timing
+10. Return structured response
+
+Execution remains single-step and synchronous.
+
+### BaseIntentClassifier Interface Update
+
+The classify() method now returns structured invocation data:
+
+    dict:
+        {
+            "capability": str,
+            "arguments": dict
+        }
+
+### BaseCapability Interface Update
+
+Capabilities must now implement:
+
+    execute(arguments: dict)
+
+Capabilities remain:
+
+- Stateless
+- Session-unaware
+- LLM-unaware
+- Deterministic
+
+### RotomCore Enforcement Responsibility
+
+RotomCore now performs defensive validation of the
+intent invocation contract prior to capability resolution.
+
+This strengthens orchestration authority without introducing
+new dependencies or violating layering constraints.
+
+---
+
+Version Updated: v1.2
+Document Updated: 2026-02-24
+
+Changes in v1.2:
+
+- Introduced structured invocation contract.
+- Added CapabilityInvocation model to domain layer.
+- Updated BaseIntentClassifier interface.
+- Updated BaseCapability interface.
+- Added defensive invocation validation in RotomCore.
+- Preserved all architectural invariants.

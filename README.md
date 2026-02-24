@@ -122,3 +122,40 @@ Planned architectural expansions:
 ------------------------------------------------------------------------
 
 Document Updated: 2026-02-24
+
+
+------------------------------------------------------------------------
+
+## Current Features (Updated in v1.2)
+
+The following capabilities were added in v1.2 without removing prior functionality:
+
+- Structured tool invocation contract:
+    - `{ "capability": "<name>", "arguments": { ... } }`
+- CapabilityInvocation internal execution model
+- BaseIntentClassifier updated to return structured invocation data
+- BaseCapability updated to accept structured arguments
+- Defensive invocation validation inside RotomCore
+
+------------------------------------------------------------------------
+
+## Roadmap Status Update (v1.2)
+
+The following roadmap item has been IMPLEMENTED as of v1.2:
+
+- Structured tool call arguments
+
+All other roadmap items remain unchanged and planned as originally documented.
+
+------------------------------------------------------------------------
+
+Version Updated: v1.2
+Document Updated: 2026-02-24
+
+Changes in v1.2:
+
+- Introduced structured tool invocation (`capability` + `arguments`).
+- Added CapabilityInvocation internal transport model.
+- Updated BaseIntentClassifier interface contract.
+- Updated BaseCapability execution contract.
+- Added defensive invocation validation inside RotomCore.
