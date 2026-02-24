@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.sqlite3
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Docker
+*.log
+
+# OS
+.DS_Store
+
+# VSCode / IDE
+.vscode/
+.idea/
+
+# Environment files
+.env
