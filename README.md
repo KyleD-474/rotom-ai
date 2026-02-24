@@ -47,9 +47,21 @@ Full architectural rules are defined in `ARCHITECTURE.md`.
 
 ## Project Structure
 
-rotom/ ├── docker-compose.yml ├── ARCHITECTURE.md ├── README.md └──
-rotom-api/ └── app/ ├── api/ ├── services/ ├── agents/ ├── capabilities/
-├── core/ ├── models/ └── schemas/
+rotom/
+│
+├── docker-compose.yml
+├── ARCHITECTURE.md
+├── README.md
+│
+└── rotom-api/
+└── app/
+├── api/
+├── services/
+├── agents/
+├── capabilities/
+├── core/
+├── models/
+└── schemas/
 
 ------------------------------------------------------------------------
 
