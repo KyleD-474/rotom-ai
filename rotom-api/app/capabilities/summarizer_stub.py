@@ -19,10 +19,12 @@ class SummarizerStubCapability(BaseCapability):
     Returns placeholder summary.
     """
 
-    def execute(self, user_input: str) -> CapabilityResult:
+    def execute(self, arguments: dict) -> CapabilityResult:
         logger.debug("Summarizer Stub execution started")
 
-        summary = f"[SUMMARY PLACEHOLDER]: {user_input[:50]}"
+        text = arguments.get("text", "")
+
+        summary = f"[SUMMARY PLACEHOLDER]: {text[:50]}"
 
         logger.debug("Summarizer Stub execution completed")
 
@@ -31,6 +33,6 @@ class SummarizerStubCapability(BaseCapability):
             output=summary,
             success=True,
             metadata={
-                "original_length": len(user_input)
+                "original_length": len(text)
             }
         )

@@ -3,9 +3,15 @@ base_intent_classifier.py
 
 Defines the interface for intent classifiers.
 
-An IntentClassifier's job is simple:
+An IntentClassifier's job:
+
 Given a user_input string,
-return the name of the capability that should handle it.
+return a structured invocation contract:
+
+{
+    "capability": "<string>",
+    "arguments": { ... }
+}
 
 This keeps routing logic separate from RotomCore.
 """
@@ -19,11 +25,14 @@ class BaseIntentClassifier(ABC):
     """
 
     @abstractmethod
-    def classify(self, user_input: str) -> str:
+    def classify(self, user_input: str) -> dict:
         """
         Determine which capability should handle the input.
 
         Returns:
-            str: capability name
+            dict: {
+                "capability": str,
+                "arguments": dict
+            }
         """
         pass

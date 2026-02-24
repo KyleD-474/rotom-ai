@@ -12,8 +12,11 @@ from abc import ABC, abstractmethod
 class BaseCapability(ABC):
     """
     All capabilities must implement execute().
+    
+    Capabilities receive structured arguments.
+    They are stateless and deterministic.
     """
 
     @abstractmethod
-    def execute(self, user_input: str):
+    def execute(self, arguments: dict):
         pass

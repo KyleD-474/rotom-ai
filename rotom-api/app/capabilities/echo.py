@@ -14,22 +14,22 @@ from app.core.logger import get_logger
 
 logger = get_logger(__name__, layer="capability", component="echo")
 
-# Returns input string unchanged.
+
 class EchoCapability(BaseCapability):
 
-    def execute(self, user_input: str) -> CapabilityResult:
+    def execute(self, arguments: dict) -> CapabilityResult:
         logger.debug("Echo execution started")
 
-        result = user_input
-        
-        # Inserted failure to test error-handling in rotom_core.py:
-        # raise ValueError("Echo exploded")
-        
-        logger.debug("Echo execution comlpeted")
+        # Phase 2: Structured arguments
+        message = arguments.get("message", "")
+
+        # raise ValueError("Echo exploded")  # Testing failure path
+
+        logger.debug("Echo execution completed")
 
         return CapabilityResult(
             capability="echo",
-            output=result,
+            output=message,
             success=True,
             metadata={}
         )

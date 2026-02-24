@@ -17,6 +17,7 @@ Future:
 import time
 from app.core.logger import get_logger
 from app.models.capability_result import CapabilityResult
+from app.models.capability_invocation import CapabilityInvocation
 
 logger = get_logger(__name__, layer="agent", component="rotom_core")
 
@@ -25,6 +26,7 @@ class RotomCore:
     """
     Executive agent responsible for routing.
     """
+    
     def __init__(
         self,
         intent_classifier,
@@ -41,18 +43,35 @@ class RotomCore:
         """ 
         Primary execution entry point.
         """
+
         logger.debug("Input received")
+
         # Ensure session exists if provided
         session = None
         if session_id:
             session = self.session_store.get(session_id)
 
-        # Idenitfy intended capbility based off of user input
-        capability_name = self.intent_classifier.classify(user_input)
+        # --- Phase 2: Structured Intent Classification ---
+        # Classifier now returns structured data:
+        # { "capability": str, "arguments": dict }
+        intent_data = self.intent_classifier.classify(user_input)
+       
+        # Defensive contract enforcement
+        if not self._validate_intent_data(intent_data):
+            raise ValueError("IntentClassifier returned invalid invocation structure")
+            
+        # Convert structured intent into internal invocation model
+        invocation = CapabilityInvocation(
+            capability_name=intent_data["capability"],
+            arguments=intent_data["arguments"],
+        )
+
+        # Extract capabilty name from internal invocation model 
+        capability_name = invocation.capability_name
 
         logger.debug(f"Routing decision: {capability_name}")
 
-        # Find capability to execute from capbility_registry
+        # Find capability in registry
         capability = self.registry.get(capability_name)
 
         if not capability:
@@ -67,13 +86,11 @@ class RotomCore:
 
         logger.debug(f"Execution started: {capability_name}")
 
-        
         start_time = time.perf_counter() # Measure execution time
-
         
         try:
-            # Execute the capability with user_input
-            result = capability.execute(user_input)
+            # --- Phase 2: Execute with structured arguments ---
+            result = capability.execute(invocation.arguments)
             error_message = None
 
         except Exception as e:
@@ -84,7 +101,6 @@ class RotomCore:
             self._log_failure(capability_name, error_message)
             
             # Create a fallback CapabilityResult
-
             result = CapabilityResult(
                 capability=capability_name,
                 output="",
@@ -101,7 +117,8 @@ class RotomCore:
         # Inject execution timing into metadata
         result.metadata["execution_time_ms"] = round(execution_time_ms, 2)
         
-        # Keep session visible internally & inject it into result metadata
+        # Session injection remains centralized in RotomCore.
+        # Keep session visible internally & inject it into result metadata.
         result.session_id = session_id
         if session_id:
             result.metadata["session_id"] = session_id
@@ -115,9 +132,6 @@ class RotomCore:
     def _log_failure(self, capability_name: str, error_message: str):
         """
         Centralized failure logging for capability execution.
-
-        Keeps error logging consistent and avoids clutter
-        inside the main execution flow.
         """
         logger.error(
             f"Capability execution failed: {capability_name}",
@@ -125,4 +139,20 @@ class RotomCore:
                 "error": error_message,
                 "capability": capability_name
             }
+        )
+
+
+    def _validate_intent_data(self, intent_data) -> bool:
+        """
+        Ensures the IntentClassifier returned a structurally valid invocation contract.
+
+        This protects RotomCore from contract drift or misbehaving classifier implementations.
+        """
+        return (
+            isinstance(intent_data, dict)
+            and "capability" in intent_data
+            and isinstance(intent_data["capability"], str)
+            and intent_data["capability"].strip() != ""
+            and "arguments" in intent_data
+            and isinstance(intent_data["arguments"], dict)
         )
