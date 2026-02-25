@@ -44,7 +44,9 @@ class LLMIntentClassifier(BaseIntentClassifier):
             ValueError if JSON is invalid or structure is incorrect.
         """
         prompt = self._build_prompt(user_input)
-
+        
+        logger.info(f"prompt: {prompt}")
+        
         raw_output = self.llm_client.generate(prompt)
 
         logger.info(f"raw_output: {raw_output}")

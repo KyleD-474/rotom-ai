@@ -84,6 +84,9 @@ class RotomCore:
             )
             raise ValueError(f"Capability '{capability_name}' not found")
 
+        # --- Phase 4: Argument validation (before execution) ---
+        self._validate_arguments(capability_name, capability, invocation.arguments)
+
         logger.debug(f"Execution started: {capability_name}")
 
         start_time = time.perf_counter() # Measure execution time
@@ -154,3 +157,35 @@ class RotomCore:
             and "arguments" in intent_data
             and isinstance(intent_data["arguments"], dict)
         )
+
+    def _validate_arguments(
+        self, capability_name: str, capability, arguments: dict
+    ) -> None:
+        """
+        Validates arguments against the capability's argument_schema before execution.
+
+        Phase 4: Argument validation layer.
+        - Every key in argument_schema must be present in arguments (required keys).
+        - Arguments may only contain keys defined in argument_schema (no extra keys).
+
+        Raises ValueError with a clear message if validation fails.
+        """
+        schema = getattr(capability, "argument_schema", None) or {}
+        if not isinstance(schema, dict):
+            raise ValueError(
+                f"Capability '{capability_name}' has invalid argument_schema"
+            )
+
+        # Required: all schema keys must be present
+        missing = [k for k in schema if k not in arguments]
+        if missing:
+            raise ValueError(
+                f"Capability '{capability_name}' missing required arguments: {missing}"
+            )
+
+        # Strict: no extra keys beyond schema
+        extra = [k for k in arguments if k not in schema]
+        if extra:
+            raise ValueError(
+                f"Capability '{capability_name}' received unknown arguments: {extra}"
+            )

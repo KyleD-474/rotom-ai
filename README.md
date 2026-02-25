@@ -1,27 +1,29 @@
+# Rotom AI Orchestration Kernel
 
-# Rotom AI Orchestration Engine
+Rotom is a **bounded AI orchestration kernel** for a persistent, personal AI system — like a "Jarvis" on your Linux PC. It is designed to have appropriate access to your files, the internet, and an LLM when necessary, and to support planning, tool execution, memory use, and hybrid reasoning **without losing control**.
 
-Rotom is a modular AI orchestration system designed to route user intent
-to structured capabilities while maintaining strict architectural
-discipline.
+Rotom is not a chatbot. It is not an uncontrolled agent. It is the **orchestration layer**: intent classification, tool gatekeeper, and execution boundary. The LLM cannot access systems unless a capability exists.
 
-This project emphasizes:
+---
 
-- Clear separation of concerns
-- Dependency injection
-- Capability purity
-- Structured failure handling
-- Centralized session lifecycle management
-- Extensibility toward LLM and tool integration
-- LLM-native reasoning with deterministic execution (introduced v1.1)
+## Vision
 
-------------------------------------------------------------------------
+> A bounded AI orchestration kernel capable of planning, tool execution, memory use, and hybrid reasoning — without losing control.
 
-## Architecture Philosophy
+- **AI flexibility** — LLM for intent and reasoning when needed  
+- **Systems-level discipline** — explicit steps, iteration limits, auditable tool use  
+- **Deterministic orchestration** — RotomCore owns the loop; capabilities are pure execution units  
+- **Replaceable LLM backend** — abstracted behind interfaces  
 
-Rotom follows strict layered boundaries:
+For a full set of intended use cases (trip planning, research, developer automation, browser automation, workflows, enterprise gateway, etc.), see **[USECASES.md](USECASES.md)**.
 
-API → Service → Agents → Capabilities
+---
+
+## Architecture
+
+Strict layered boundaries:
+
+**API → Service → Agents → Capabilities**
 
 Core invariants:
 
@@ -29,35 +31,37 @@ Core invariants:
 - RotomCore constructs nothing (all dependencies are injected)
 - API schemas do not leak into core logic
 - Session lifecycle is owned by RotomCore
-- Integrations must be abstracted behind interfaces
-- Execution remains deterministic even when reasoning is probabilistic
+- Integrations are abstracted behind interfaces
+- Execution remains bounded and deterministic at the orchestration level
 
-Full architectural rules are defined in `ARCHITECTURE.md`.
+Full rules: **[ARCHITECTURE.md](ARCHITECTURE.md)**.  
+Project context and roadmap: **[AI_CONTEXT.md](AI_CONTEXT.md)**.
 
-------------------------------------------------------------------------
+---
 
-## Current Features (v1.1)
+## Current Features (v1.4)
 
 - FastAPI endpoint: `/run`
-- LLM-based intent classification (OpenAI-backed)
-- Structured JSON capability routing
+- LLM-based intent classification (OpenAI-backed, metadata-driven prompts)
+- Structured JSON capability routing: `{ "capability": "<name>", "arguments": { ... } }`
+- Argument validation: required keys and no extra keys enforced before execution
 - Capability registry pattern
-- Structured failure handling inside RotomCore
-- Execution timing injection (perf_counter)
+- Structured failure handling and execution timing injection
 - In-memory session store (non-persistent)
 - Dockerized deployment
-- Environment-based LLM configuration (OPENAI_API_KEY, OPENAI_MODEL)
+- Environment-based LLM configuration (`OPENAI_API_KEY`, `OPENAI_MODEL`)
 
-------------------------------------------------------------------------
+---
 
 ## Project Structure
 
+```
 rotom/
-│
 ├── docker-compose.yml
 ├── ARCHITECTURE.md
+├── AI_CONTEXT.md
+├── USECASES.md
 ├── README.md
-│
 └── rotom-api/
     └── app/
         ├── api/
@@ -69,46 +73,47 @@ rotom/
         ├── core/
         ├── models/
         └── schemas/
+```
 
-------------------------------------------------------------------------
+---
 
 ## Running Locally
 
-### Using Docker
-
 From the project root:
 
-    docker compose up
+```bash
+docker compose up
+```
 
-The API will be available at:
+API: **http://localhost:8000/run**
 
-    http://localhost:8000/run
-
-------------------------------------------------------------------------
+---
 
 ## Example Request
 
-POST `/run`
+**POST** `/run`
 
-{ 
-  "input": "Summarize this article...", 
-  "session_id": "test-session" 
+```json
+{
+  "input": "Echo back: Hello world",
+  "session_id": "test-session"
 }
+```
 
-------------------------------------------------------------------------
+---
 
 ## Roadmap
 
-Planned architectural expansions:
+- ~~Structured tool call arguments~~ (v1.2)
+- ~~Metadata-driven orchestration~~ (v1.3)
+- ~~Argument validation layer~~ (v1.4)
+- Session memory utilization
+- Tool result injection into LLM
+- Iterative reasoning loop (bounded, max-iteration guard)
+- Persistent storage (abstracted)
+- Hybrid tool + LLM execution
 
-- Structured tool call arguments
-- Iterative agent reasoning loop
-- Persistent session memory
-- Multi-step capability chaining
-- Tool + LLM hybrid orchestration
-- Long-running daemon mode
-
-------------------------------------------------------------------------
+---
 
 ## Development Principles
 
@@ -116,46 +121,9 @@ Planned architectural expansions:
 - All dependencies are injected.
 - No premature complexity.
 - Capabilities remain pure.
-- LLM reasoning must be structured and validated.
+- LLM usage is structured and validated.
 - Architectural changes require updating ARCHITECTURE.md first.
 
-------------------------------------------------------------------------
+---
 
-Document Updated: 2026-02-24
-
-
-------------------------------------------------------------------------
-
-## Current Features (Updated in v1.2)
-
-The following capabilities were added in v1.2 without removing prior functionality:
-
-- Structured tool invocation contract:
-    - `{ "capability": "<name>", "arguments": { ... } }`
-- CapabilityInvocation internal execution model
-- BaseIntentClassifier updated to return structured invocation data
-- BaseCapability updated to accept structured arguments
-- Defensive invocation validation inside RotomCore
-
-------------------------------------------------------------------------
-
-## Roadmap Status Update (v1.2)
-
-The following roadmap item has been IMPLEMENTED as of v1.2:
-
-- Structured tool call arguments
-
-All other roadmap items remain unchanged and planned as originally documented.
-
-------------------------------------------------------------------------
-
-Version Updated: v1.2
-Document Updated: 2026-02-24
-
-Changes in v1.2:
-
-- Introduced structured tool invocation (`capability` + `arguments`).
-- Added CapabilityInvocation internal transport model.
-- Updated BaseIntentClassifier interface contract.
-- Updated BaseCapability execution contract.
-- Added defensive invocation validation inside RotomCore.
+*Document updated: 2026-02-25*

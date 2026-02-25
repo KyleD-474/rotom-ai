@@ -1,6 +1,5 @@
-
 # Rotom AI Orchestration System
-## Architecture Constitution (v1.1)
+## Architecture Constitution (v1.4)
 
 This document defines the structural, behavioral, and dependency rules of the Rotom system.
 All development must adhere to these constraints unless this document is explicitly revised.
@@ -11,7 +10,9 @@ Architecture leads code.
 
 # 1. System Identity
 
-Rotom is an AI orchestration engine responsible for:
+Rotom is a **bounded AI orchestration kernel**: the control layer for a persistent, personal AI system (e.g. a "Jarvis"-style assistant on your Linux PC) with access to files, the internet, and LLM when needed — capable of planning, tool execution, memory use, and hybrid reasoning, **without losing control**.
+
+Rotom is responsible for:
 
 - Interpreting user input
 - Classifying intent (LLM-based as of v1.1)
@@ -20,18 +21,29 @@ Rotom is an AI orchestration engine responsible for:
 - Handling structured failure
 - Managing session state
 - Returning structured results
+- Enforcing iteration limits and execution boundaries (as the roadmap advances)
 
 Rotom is NOT:
 
 - A monolithic AI agent
-- A thin LLM wrapper
+- A thin LLM wrapper or chatbot
 - A persistence-first system
 - A tightly coupled framework
+- An uncontrolled agent
 
-Rotom is an orchestration core.
+Rotom is an orchestration core. The LLM cannot access systems unless a capability exists; capabilities are the explicit gatekeeper.
+
+For intended use cases (trip planning, research, developer automation, browser automation, workflows, etc.), see **USECASES.md**.
 
 LLM-based intent classification was introduced in v1.1.
-Execution remains single-step and deterministic.
+Structured invocation (capability + arguments) was introduced in v1.2.
+Metadata-driven prompt construction was introduced in v1.3.
+Argument validation before execution was introduced in v1.4.
+
+Execution remains single-step and deterministic today; the roadmap adds bounded multi-step planning and hybrid reasoning.
+
+Orchestration-level AI determines routing decisions.
+Execution remains bounded and controlled by RotomCore.
 
 ---
 
@@ -72,7 +84,7 @@ Responsibilities:
 Constructs:
 - SessionStore implementation
 - CapabilityRegistry
-- IntentClassifier implementation (LLM-backed as of v1.1)
+- IntentClassifier implementation (LLM-backed)
 - LLMClient implementation (OpenAIClient currently)
 - RotomCore
 
@@ -96,6 +108,7 @@ Responsibilities of RotomCore:
 - Structured failure handling
 - Execution timing injection
 - Capability resolution
+- Defensive invocation validation
 
 RotomCore must:
 - Construct nothing
@@ -113,11 +126,21 @@ Rules:
 - No session awareness
 - No orchestration awareness
 - No persistence awareness
-- No direct LLM awareness
+- Dependencies must be injected
+- Execution must remain bounded and atomic
 
-Allowed:
-- Debug logging
-- Deterministic execution
+Capabilities define declarative metadata:
+
+- name
+- description
+- argument_schema (dict[str, str])
+
+Capabilities MAY internally use injected services (including an LLM client) provided:
+
+- They do not construct dependencies
+- They do not orchestrate other capabilities
+- They do not access session state
+- They remain bounded from RotomCore’s perspective
 
 Failure policy is NOT owned by capabilities.
 
@@ -139,12 +162,17 @@ Must NOT:
 ## 2.6 Models (`app/models`)
 
 Internal domain models only.
-Example:
+
+Examples:
 - CapabilityResult
+- CapabilityInvocation
 
 Must NOT:
 - Be API schemas
 - Be tied to FastAPI
+
+CapabilityInvocation serves as the internal transport object between
+intent classification and capability execution.
 
 ---
 
@@ -168,7 +196,7 @@ FastAPI → AgentService → RotomCore
 AgentService constructs:
 - SessionStore implementation
 - CapabilityRegistry
-- IntentClassifier implementation (LLM-backed as of v1.1)
+- IntentClassifier implementation (LLM-backed)
 - LLMClient implementation
 - RotomCore
 
@@ -195,21 +223,30 @@ Session persistence must never leak into capabilities.
 
 ---
 
-# 5. Execution Contract (Updated v1.1)
+# 5. Execution Contract (v1.4)
+
+Invocation contract:
+
+    {
+      "capability": "<string>",
+      "arguments": { ... }
+    }
 
 Execution flow:
 
 1. Receive input
-2. LLM classifies intent via structured JSON
-3. Validate capability against registry
-4. Resolve capability
-5. Execute capability
-6. Catch unhandled exceptions
-7. Produce CapabilityResult
-8. Inject execution timing
-9. Return structured response
+2. LLM classifies intent via metadata-driven structured JSON
+3. Validate invocation structure (`capability` + `arguments`)
+4. Validate capability against registry
+5. Construct CapabilityInvocation
+6. Validate arguments against capability argument_schema (Phase 4)
+7. Execute capability with structured arguments
+8. Catch unhandled exceptions
+9. Produce CapabilityResult
+10. Inject execution timing
+11. Return structured response
 
-CapabilityResult is the internal execution contract.
+Execution remains single-step and synchronous.
 
 ---
 
@@ -218,8 +255,6 @@ CapabilityResult is the internal execution contract.
 - Debug logging allowed in all layers.
 - Structured error logging centralized in RotomCore.
 - Capabilities do not enforce failure policy.
-
-No changes introduced in v1.1.
 
 ---
 
@@ -231,8 +266,6 @@ Async may only be introduced when:
 - Multi-step LLM reasoning loops are added
 - External APIs require concurrency
 - Persistence requires it
-
-v1.1 introduced LLM integration but did NOT introduce async.
 
 Async must be deliberate and documented.
 
@@ -248,11 +281,9 @@ When introduced:
 - Must not leak into capabilities
 - Must not alter execution contract
 
-v1.1 does not introduce persistence changes.
-
 ---
 
-# 9. LLM Integration Policy (Implemented v1.1)
+# 9. LLM Integration Policy (v1.3)
 
 LLM integration must:
 
@@ -261,24 +292,30 @@ LLM integration must:
 - Not be hardcoded
 - Preserve testability
 
-Current state (v1.1):
+Current state:
 
-- LLM is used for intent classification only.
+- LLM is used for intent classification.
+- Prompt construction is metadata-driven via CapabilityRegistry.
 - Structured JSON responses are enforced.
-- Capability validation occurs after LLM output.
-- No iterative reasoning loop yet.
-- No multi-step planning yet.
-- No tool argument injection yet.
+- Defensive validation occurs prior to execution.
+- Capability-level LLM usage is permitted if injected and bounded.
+- No iterative reasoning loop exists.
+- No multi-step planning exists.
+- No autonomous execution exists.
 
-RotomCore may orchestrate LLM usage but must not depend on a concrete implementation.
+LLM usage remains strictly bounded by RotomCore orchestration.
 
 ---
 
 # 10. Future Expansion Vectors
 
+Implemented:
+- Structured tool call arguments (v1.2)
+- Metadata-driven orchestration (v1.3)
+- Argument validation layer (v1.4)
+
 Planned:
 
-- Structured tool call arguments
 - Iterative agent reasoning loop
 - Persistent session memory
 - Multi-step capability chaining
@@ -317,101 +354,5 @@ Architecture leads code.
 
 ---
 
-Document Updated: 2026-02-24
-
-
----
-
-## Addendum: v1.2 Structured Invocation Update
-
-The following architectural updates were introduced in v1.2.
-No invariants were modified.
-
-### Structured Invocation Contract
-
-Intent classification now returns:
-
-    {
-        "capability": "<string>",
-        "arguments": { ... }
-    }
-
-This replaces the prior implicit contract of returning only a capability name.
-
-### CapabilityInvocation Model
-
-A new internal domain model was introduced:
-
-- CapabilityInvocation
-
-This model serves as the internal transport object between
-intent classification and capability execution.
-
-It is:
-
-- Framework-agnostic
-- Not an API schema
-- Not tied to FastAPI
-- Not exposed outside core logic
-
-### Updated Execution Contract (v1.2 Clarification)
-
-The execution flow now formally includes structured argument transport:
-
-1. Receive input
-2. LLM classifies intent via structured JSON
-3. Validate invocation structure (`capability` + `arguments`)
-4. Validate capability against registry
-5. Construct CapabilityInvocation
-6. Execute capability with structured arguments
-7. Catch unhandled exceptions
-8. Produce CapabilityResult
-9. Inject execution timing
-10. Return structured response
-
-Execution remains single-step and synchronous.
-
-### BaseIntentClassifier Interface Update
-
-The classify() method now returns structured invocation data:
-
-    dict:
-        {
-            "capability": str,
-            "arguments": dict
-        }
-
-### BaseCapability Interface Update
-
-Capabilities must now implement:
-
-    execute(arguments: dict)
-
-Capabilities remain:
-
-- Stateless
-- Session-unaware
-- LLM-unaware
-- Deterministic
-
-### RotomCore Enforcement Responsibility
-
-RotomCore now performs defensive validation of the
-intent invocation contract prior to capability resolution.
-
-This strengthens orchestration authority without introducing
-new dependencies or violating layering constraints.
-
----
-
-Version Updated: v1.2
-Document Updated: 2026-02-24
-
-Changes in v1.2:
-
-- Introduced structured invocation contract.
-- Added CapabilityInvocation model to domain layer.
-- Updated BaseIntentClassifier interface.
-- Updated BaseCapability interface.
-- Added defensive invocation validation in RotomCore.
-- Preserved all architectural invariants.
+Version Updated: v1.4
+Document Updated: 2026-02-25
