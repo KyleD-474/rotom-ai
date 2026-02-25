@@ -1,5 +1,5 @@
 # Rotom AI Orchestration System
-## Architecture Constitution (v1.4)
+## Architecture Constitution (v1.5)
 
 This document defines the structural, behavioral, and dependency rules of the Rotom system.
 All development must adhere to these constraints unless this document is explicitly revised.
@@ -38,7 +38,7 @@ For intended use cases (trip planning, research, developer automation, browser a
 LLM-based intent classification was introduced in v1.1.
 Structured invocation (capability + arguments) was introduced in v1.2.
 Metadata-driven prompt construction was introduced in v1.3.
-Argument validation before execution was introduced in v1.4.
+Argument validation before execution was introduced in v1.4. Session memory (context injection and turn storage) was introduced in v1.5.
 
 Execution remains single-step and deterministic today; the roadmap adds bounded multi-step planning and hybrid reasoning.
 
@@ -223,7 +223,7 @@ Session persistence must never leak into capabilities.
 
 ---
 
-# 5. Execution Contract (v1.4)
+# 5. Execution Contract (v1.5)
 
 Invocation contract:
 
@@ -313,9 +313,11 @@ Implemented:
 - Structured tool call arguments (v1.2)
 - Metadata-driven orchestration (v1.3)
 - Argument validation layer (v1.4)
+- Session memory utilization (v1.5): context for intent classification, turn summaries per session
 
 Planned:
 
+- Reference resolution / input rewriting before intent classification (resolve-then-classify)
 - Iterative agent reasoning loop
 - Persistent session memory
 - Multi-step capability chaining
@@ -354,5 +356,5 @@ Architecture leads code.
 
 ---
 
-Version Updated: v1.4
+Version Updated: v1.5
 Document Updated: 2026-02-25

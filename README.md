@@ -39,7 +39,7 @@ Project context and roadmap: **[AI_CONTEXT.md](AI_CONTEXT.md)**.
 
 ---
 
-## Current Features (v1.4)
+## Current Features (v1.5)
 
 - FastAPI endpoint: `/run`
 - LLM-based intent classification (OpenAI-backed, metadata-driven prompts)
@@ -48,6 +48,7 @@ Project context and roadmap: **[AI_CONTEXT.md](AI_CONTEXT.md)**.
 - Capability registry pattern
 - Structured failure handling and execution timing injection
 - In-memory session store (non-persistent)
+- Session memory (Phase 5): context injected into intent classification; turn summaries stored per session when `session_id` is provided
 - Dockerized deployment
 - Environment-based LLM configuration (`OPENAI_API_KEY`, `OPENAI_MODEL`)
 
@@ -89,6 +90,39 @@ API: **http://localhost:8000/run**
 
 ---
 
+## Running tests
+
+The test suite uses Python’s built-in **unittest** and expects the same environment as the app (same Python version and dependencies). Run tests **inside the Docker container** so `app` and all packages (e.g. pydantic) are available.
+
+From the **project root** (where `docker-compose.yml` is):
+
+```bash
+docker compose run --rm rotom-api python -m unittest discover -s tests -v
+```
+
+- **`docker compose run --rm rotom-api`** — Start a one-off container with the same image and env as the API; `--rm` removes the container when the command finishes.
+- **`python -m unittest discover -s tests -v`** — Discover all `test_*.py` under `tests/`, run them, and print each test name (`-v` = verbose).
+
+**How to tell if tests passed**
+
+1. **Exit code** — If the command exits with code 0, all tests passed. Non-zero means at least one test failed or there was an error.
+2. **Last line** — You should see `OK` at the end and a line like `Ran N tests in X.XXXs`. If something failed, you’ll see `FAILED` and a traceback.
+
+Example of a successful run:
+
+```
+test_append_and_get_context_one_turn ... ok
+test_build_prompt_with_context_includes_it ... ok
+...
+----------------------------------------------------------------------
+Ran 10 tests in 0.123s
+OK
+```
+
+After changing code, you can rerun this command; no need to restart the long-running `docker compose up` process. The `tests/` directory is mounted into the container (see `docker-compose.yml`), so edits to tests or `app` are picked up on the next run.
+
+---
+
 ## Example Request
 
 **POST** `/run`
@@ -107,11 +141,12 @@ API: **http://localhost:8000/run**
 - ~~Structured tool call arguments~~ (v1.2)
 - ~~Metadata-driven orchestration~~ (v1.3)
 - ~~Argument validation layer~~ (v1.4)
-- Session memory utilization
-- Tool result injection into LLM
-- Iterative reasoning loop (bounded, max-iteration guard)
-- Persistent storage (abstracted)
-- Hybrid tool + LLM execution
+- ~~Session memory utilization~~ (v1.5, Phase 5)
+- Reference resolution / resolve-then-classify (Phase 6)
+- Tool result injection into LLM (Phase 7)
+- Iterative reasoning loop (bounded, max-iteration guard) (Phase 8)
+- Persistent storage (abstracted) (Phase 9)
+- Hybrid tool + LLM execution (Phase 10)
 
 ---
 

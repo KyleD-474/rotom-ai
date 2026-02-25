@@ -1,18 +1,17 @@
 """
-rotom_core.py
+rotom_core.py — The main orchestrator
 
-RotomCore is the executive orchestrator.
+RotomCore is the "brain" that: (1) asks the intent classifier which capability
+to run and with what arguments, (2) looks up that capability in the registry,
+(3) validates arguments, (4) runs the capability, (5) handles errors and
+timing. It does NOT construct any of its dependencies—those are injected
+by the service layer.
 
-Responsibilities:
-- Interpret user input
-- Determine appropriate capability
-- Execute capability
-- Return result
-
-Future:
-- IntentClassifier abstraction
-- LLM integration
-- Memory/session integration
+Phase 5: When a session_id is present, we read recent conversation from
+session_memory and pass it to the classifier (so it can understand "echo that
+again"). After execution we append this turn (user message + what we ran +
+short result summary) to session_memory for the next request. Capabilities
+never see session or memory—only RotomCore talks to memory.
 """
 import time
 from app.core.logger import get_logger
@@ -21,40 +20,48 @@ from app.models.capability_invocation import CapabilityInvocation
 
 logger = get_logger(__name__, layer="agent", component="rotom_core")
 
+# When we store the capability result in memory we truncate output to avoid huge prompts.
+OUTPUT_SUMMARY_MAX_LEN = 200
+
 
 class RotomCore:
     """
-    Executive agent responsible for routing.
+    Single entry point for "handle this user message": classify intent,
+    resolve capability, validate args, execute, then record the turn in
+    memory if we have a session_id.
     """
-    
+
     def __init__(
         self,
         intent_classifier,
         registry,
-        session_store
+        session_store,
+        session_memory,
     ):
         logger.info("Rotom Core initialized")
-
         self.registry = registry
         self.intent_classifier = intent_classifier
         self.session_store = session_store
+        self.session_memory = session_memory
 
     def handle(self, user_input: str, session_id: str | None = None):
-        """ 
-        Primary execution entry point.
         """
-
+        Process one user message: get context from memory (if session), classify
+        intent, run the chosen capability, then write this turn back to memory.
+        """
         logger.debug("Input received")
 
-        # Ensure session exists if provided
-        session = None
         if session_id:
-            session = self.session_store.get(session_id)
+            self.session_store.get(session_id)  # ensure session exists
 
-        # --- Phase 2: Structured Intent Classification ---
-        # Classifier now returns structured data:
-        # { "capability": str, "arguments": dict }
-        intent_data = self.intent_classifier.classify(user_input)
+        # Phase 5: Pull recent conversation for this session so the classifier
+        # can use it (e.g. to resolve "that" or "it" in the current message).
+        context = ""
+        if session_id:
+            context = self.session_memory.get_context(session_id, max_turns=5) or ""
+
+        # Ask classifier: which capability + arguments? Pass context so LLM can use it.
+        intent_data = self.intent_classifier.classify(user_input, context=context or None)
        
         # Defensive contract enforcement
         if not self._validate_intent_data(intent_data):
@@ -123,6 +130,25 @@ class RotomCore:
         # Session injection remains centralized in RotomCore.
         # Keep session visible internally.
         result.session_id = session_id
+
+        # Phase 5: Save this turn to memory so the *next* request in this
+        # session can see "user said X, we ran Y, result Z." We append two
+        # entries: one for the user message, one for what we did.
+        if session_id:
+            self.session_memory.append(
+                session_id,
+                {"role": "user", "content": user_input},
+            )
+            output_summary = (result.output or "")[:OUTPUT_SUMMARY_MAX_LEN]
+            self.session_memory.append(
+                session_id,
+                {
+                    "role": "assistant",
+                    "capability": capability_name,
+                    "success": result.success,
+                    "output_summary": output_summary,
+                },
+            )
         
         logger.debug(f"Execution finished: {capability_name}")
 

@@ -1,45 +1,30 @@
 """
-context.py
+context.py — Per-request data using contextvars
 
-This module manages per-request contextual data using contextvars.
-
-Why this exists:
-- FastAPI is asynchronous.
-- Multiple requests may execute concurrently.
-- We need a way to store request-specific data safely.
-
-contextvars allows us to store values that are:
-- Scoped to a specific request
-- Automatically isolated across concurrent async calls
-
-In our case:
-We use it to store a request_id for structured logging.
+FastAPI can handle many requests at the same time (async). We need a way to
+attach data to "the current request" so that when we log something deep inside
+RotomCore or a capability, we know which HTTP request it belonged to. Python's
+contextvars give us exactly that: a value that is automatically isolated per
+async task. The middleware (main.py) sets request_id at the start of each
+request; the logger (logger.py) reads it and adds it to every log line.
 """
 
 import contextvars
 import uuid
 
 
-# Define a context variable that will hold the request_id.
-# Default is None until set by middleware.
+# One context variable for the current request's ID. Defaults to None when
+# we're not inside a request (e.g. during startup or in a background task).
 request_id_ctx = contextvars.ContextVar("request_id", default=None)
 
 
-"""
-Generate a new UUID for the current request
-and store it in the request-scoped context.
-"""
 def generate_request_id():
+    """Create a new UUID, store it in context for this request, and return it. Called by middleware."""
     rid = str(uuid.uuid4())
     request_id_ctx.set(rid)
     return rid
 
 
-"""
-Retrieve the current request_id from context.
-
-If called outside of a request lifecycle,
-this may return None.
-"""
 def get_request_id():
+    """Return the request_id for the current request, or None if not in a request (e.g. tests)."""
     return request_id_ctx.get()

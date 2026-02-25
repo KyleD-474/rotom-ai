@@ -1,9 +1,11 @@
 """
-base_capability.py
+base_capability.py — Interface for all capabilities
 
-Defines interface for all capabilities.
-
-Capabilities represent atomic skills Rotom can execute.
+A capability is a single, atomic action Rotom can perform (e.g. echo a message,
+summarize text). Each one has a name, description, and argument_schema so the
+LLM and RotomCore know how to call it. Capabilities are stateless: they get
+only the arguments for this call and return a CapabilityResult. They do not
+see session, memory, or the registry—they just execute.
 """
 
 from abc import ABC, abstractmethod
@@ -11,16 +13,15 @@ from abc import ABC, abstractmethod
 
 class BaseCapability(ABC):
     """
-    All capabilities must implement execute().
-    
-    Capabilities receive structured arguments.
-    They are stateless and deterministic.
+    Subclasses must set name, description, and argument_schema (used for
+    validation and for building the LLM prompt), and implement execute(arguments).
     """
-    # Metadata descriptors
+
     name: str
     description: str
     argument_schema: dict[str, str]
 
     @abstractmethod
     def execute(self, arguments: dict):
+        """Run the capability with the given arguments; return a CapabilityResult."""
         pass

@@ -10,4 +10,5 @@ services:
             - .env
         volumes:
             - ./rotom-api/app:/app/app
+            - ./rotom-api/tests:/app/tests
         restart: unless-stopped

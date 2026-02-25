@@ -212,7 +212,7 @@ Prevents argument drift (e.g., "text" vs "message").
 
 ---
 
-# 6. Current Progress (v1.4)
+# 6. Current Progress (v1.5)
 
 Completed:
 
@@ -225,6 +225,7 @@ Completed:
 - Session ID managed centrally
 - Dockerized runtime
 - Argument validation layer (Phase 4): validate arguments against capability argument_schema before execution; required keys and no extra keys enforced
+- Session memory utilization (Phase 5): contextual memory injection, abstract BaseSessionMemory interface, intent classifier receives optional context, RotomCore reads context and appends turn summaries; capabilities do not access session or memory
 
 System is stable and deterministic.
 
@@ -253,33 +254,40 @@ System is stable and deterministic.
 - Still single-step, still synchronous
 - No schema libraries; validation in RotomCore
 
-## Phase 5 – Session Memory Utilization
+## Phase 5 – Session Memory Utilization ✓
 
 - Introduce contextual memory injection
 - Still single-step execution
 - Abstract memory behind interface
 - No capability access to session state
 
-## Phase 6 – Tool Result Injection
+## Phase 6 – Reference Resolution (Resolve-Then-Classify)
+
+- Optional preprocessing step: given session context + raw user message, LLM produces a single **rewritten** message where references (“that”, “it”, “again”, etc.) are resolved from context.
+- Intent classification then runs on the rewritten message only; no need to hardcode referring phrases in the classifier.
+- Keeps classifier simple and scales to more tools and more complex context.
+- Still single-step execution; only the input to the classifier changes.
+
+## Phase 7 – Tool Result Injection
 
 - Feed capability results back into LLM
 - Introduce structured reasoning continuation
 - Still bounded execution
 
-## Phase 7 – Iterative Reasoning Loop
+## Phase 8 – Iterative Reasoning Loop
 
 - Multi-step planning
 - Max-iteration guard
 - Controlled loop inside RotomCore
 - No autonomous infinite loops
 
-## Phase 8 – Persistent Storage
+## Phase 9 – Persistent Storage
 
 - Abstract persistence layer
 - Inject via interface
 - No leakage into capability layer
 
-## Phase 9 – Hybrid Tool + LLM Execution
+## Phase 10 – Hybrid Tool + LLM Execution
 
 - LLM may synthesize outputs directly
 - RotomCore orchestrates hybrid reasoning

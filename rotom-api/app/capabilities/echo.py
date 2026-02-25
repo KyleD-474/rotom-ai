@@ -1,11 +1,10 @@
 """
-echo.py
+echo.py — Echo capability: returns the given message unchanged
 
-Simple echo capability.
-
-Used for:
-- Testing routing
-- Validating capability system
+This is the simplest capability: it takes a "message" argument and returns
+it as the output. We use it to test the full pipeline (API → service → RotomCore
+→ classifier → registry → capability) and to validate that argument validation
+and session memory work without needing a real LLM or external service.
 """
 
 from app.capabilities.base_capability import BaseCapability
@@ -16,27 +15,12 @@ logger = get_logger(__name__, layer="capability", component="echo")
 
 
 class EchoCapability(BaseCapability):
-
-    # Phase 3: Metadata descriptors
     name = "echo"
     description = "Repeat the provided message verbatim."
-    argument_schema = {
-        "message": "string - The message to repeat."
-    }
+    argument_schema = {"message": "string - The message to repeat."}
 
     def execute(self, arguments: dict) -> CapabilityResult:
-        logger.debug("Echo execution started")
-
-        # Phase 2: Structured arguments
         message = arguments.get("message", "")
-
-        # raise ValueError("Echo exploded")  # Testing failure path
-
+        logger.debug("Echo execution started")
         logger.debug("Echo execution completed")
-
-        return CapabilityResult(
-            capability="echo",
-            output=message,
-            success=True,
-            metadata={}
-        )
+        return CapabilityResult(capability="echo", output=message, success=True, metadata={})

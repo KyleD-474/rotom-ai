@@ -1,17 +1,18 @@
 """
-logging_config.py
+logging_config.py — One-time setup for application logging
 
-Centralized logging configuration for the Rotom system.
+This module configures the root logger at startup (called from main.py). We
+use the root logger so every get_logger() call inherits the same format and
+handler. Logs go to stdout so that in Docker (or any container) they can be
+captured by the platform without touching the filesystem.
 
-This file is responsible for:
-- Defining how logs are formatted
-- Ensuring logs are structured (JSON)
-- Sending logs to stdout (so Docker can capture them)
-- Setting the global log level
+Environment:
+  - LOG_MODE=dev  (default): human-readable lines like "[INFO] message".
+  - LOG_MODE=prod: JSON lines so log aggregators can parse level, timestamp, request_id, etc.
 
-IMPORTANT:
-This file should be initialized ONCE at application startup.
-No other part of the system should reconfigure logging.
+The fields we use (request_id, layer, component) are injected by logger.py's
+LoggerAdapter; this file only decides how they are rendered. Do not reconfigure
+logging from anywhere else—do it here once at startup.
 """
 
 import logging
@@ -21,57 +22,20 @@ from pythonjsonlogger import jsonlogger
 
 
 def setup_logging():
-    """
-    Configure the root logger for the entire application.
-
-    We intentionally configure the ROOT logger so that:
-    - All modules inherit this configuration automatically
-    - We avoid inconsistent formatting across layers
-
-    LOG_MODE determines formatting:
-        - dev  -> human-readable logs
-        - prod -> structured JSON logs
-    """
-
-    # Get the root logger instance.
-    # This affects all loggers created via logging.getLogger().
+    """Configure the root logger: level, output stream, and format (dev vs prod JSON)."""
     logger = logging.getLogger()
-
-    # Set minimum logging level.
-    # INFO is appropriate for production by default.
-    # DEBUG can be enabled later via environment config.
     logger.setLevel(logging.INFO)
 
-    # StreamHandler directs logs to stdout.
-    # This is critical in containerized environments (Docker),
-    # where stdout/stderr is how logs are collected.
     handler = logging.StreamHandler(sys.stdout)
 
-    # JsonFormatter ensures logs are structured JSON,
-    # not plain text.
-    #
-    # The fields listed here must match attributes
-    # we inject via LoggerAdapter (request_id, layer, component).
     log_mode = os.getenv("LOG_MODE", "dev").lower()
     if log_mode == "prod":
-            # Production -> structured JSON logs
-            formatter = jsonlogger.JsonFormatter(
-                rename_fields={
-                    "levelname": "level",
-                    "asctime": "timestamp"
-                }
-            )
-    else:
-        # Development -> clean readable logs
-        formatter = logging.Formatter(
-            "[%(levelname)s] %(message)s"
+        formatter = jsonlogger.JsonFormatter(
+            rename_fields={"levelname": "level", "asctime": "timestamp"}
         )
-
+    else:
+        formatter = logging.Formatter("[%(levelname)s] %(message)s")
 
     handler.setFormatter(formatter)
-
-    # Remove any existing handlers to avoid duplicate logs.
     logger.handlers = []
-
-    # Attach our configured handler.
     logger.addHandler(handler)

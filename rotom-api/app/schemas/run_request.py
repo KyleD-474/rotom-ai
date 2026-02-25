@@ -1,29 +1,11 @@
 """
-run_request.py
+run_request.py — Request schema for POST /run
 
-Defines the request schema for the /run endpoint.
-
-Why this file exists:
-
-Previously, the API accepted a raw dictionary (payload: dict),
-which caused the following issues:
-
-- No input validation
-- No auto-generated API documentation clarity
-- Swagger showed generic "additionalProp1" schema
-- No type enforcement
-- Harder to maintain as the API evolves
-
-By defining a Pydantic model, we gain:
-
-- Automatic request validation
-- Clear API documentation in /docs
-- Strong typing
-- Automatic 422 errors for malformed input
-- Cleaner service-layer contracts
-
-This file contains ONLY schema definitions.
-It should not contain business logic.
+We use a Pydantic model so FastAPI validates the body automatically and
+/docs shows a clear contract. Invalid requests get 422 before they reach
+the service layer. This file is only schemas—no business logic. The API
+layer (routes) converts this to the simple values the service expects
+(input, session_id).
 """
 
 from pydantic import BaseModel
@@ -32,27 +14,8 @@ from typing import Optional
 
 class RunRequest(BaseModel):
     """
-    Schema for incoming /run requests.
-
-    Expected JSON body:
-
-        {
-            "input": "some text to process"
-        }
-
-    Attributes:
-        input (str):
-            The raw user input string that will be processed
-            by RotomCore and routed to the appropriate capability.
-
-    Future extensibility:
-
-        This schema can be expanded later to include:
-            - session_id
-            - user_id
-            - metadata
-            - execution options
-            - model selection overrides
+    JSON body for /run: the user's message and an optional session id.
+    When session_id is present, Rotom uses it for Phase 5 context/memory.
     """
 
     input: str

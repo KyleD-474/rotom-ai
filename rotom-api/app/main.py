@@ -1,13 +1,13 @@
 """
-main.py
+main.py — Application entry point for the Rotom API
 
-Application entrypoint for the Rotom API.
+This file is what gets run (e.g. by uvicorn). It:
+  1. Sets up logging once so every module gets consistent format and level.
+  2. Creates the FastAPI app and attaches middleware that assigns each request
+     a unique request_id (stored in contextvars) so logs can be traced per request.
+  3. Registers the API routes (e.g. POST /run, GET /health).
 
-Responsibilities:
-- Initialize logging
-- Create FastAPI app
-- Register middleware
-- Register routes
+We do not put business logic here—only wiring and configuration.
 """
 
 from fastapi import FastAPI, Request
@@ -17,37 +17,20 @@ from app.core.context import generate_request_id
 from app.api.routes import router
 
 
-# -------------------------------------------------------------------
-# Initialize logging BEFORE app starts handling requests
-# -------------------------------------------------------------------
+# Configure logging first so anything that runs after this uses our format and level.
 setup_logging()
 
-
-# -------------------------------------------------------------------
-# Create FastAPI app instance
-# -------------------------------------------------------------------
 app = FastAPI(title="Rotom AI System")
 
 
-# -------------------------------------------------------------------
-# Middleware: Inject Request ID
-#
-# This runs on EVERY incoming HTTP request.
-# It ensures that all logs generated during the lifecycle
-# of this request share the same request_id.
-# -------------------------------------------------------------------
+# This middleware runs on every HTTP request. It generates a unique ID for the request
+# and stores it in contextvars so that logger.py can attach it to every log line
+# produced while handling this request. That makes it easy to grep logs by request.
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
-    # Generate and store request_id in contextvars
     generate_request_id()
-
-    # Continue request processing
     response = await call_next(request)
-
     return response
 
 
-# -------------------------------------------------------------------
-# Register API routes
-# -------------------------------------------------------------------
 app.include_router(router)

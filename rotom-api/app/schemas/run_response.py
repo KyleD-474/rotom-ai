@@ -1,12 +1,10 @@
 """
-run_response.py
+run_response.py — Response schema for POST /run
 
-Defines the API response schema for the /run endpoint.
-
-This is the formal API contract exposed externally.
-It mirrors CapabilityResult but exists separately
-to maintain a clean separation between internal models
-and external API schemas.
+The HTTP response shape is defined here so the API contract is explicit and
+stable. It matches the internal CapabilityResult (capability name, output,
+success, metadata, session_id) but we keep it as a separate schema so that
+internal models can evolve without forcing breaking API changes.
 """
 
 from pydantic import BaseModel
@@ -14,9 +12,7 @@ from typing import Dict, Any, Optional
 
 
 class RunResponse(BaseModel):
-    """
-    Structured response returned by /run endpoint.
-    """
+    """What the client gets back: which capability ran, its output, success flag, optional metadata, and session_id if provided."""
 
     capability: str
     output: str
