@@ -12,6 +12,12 @@ session_memory and pass it to the classifier (so it can understand "echo that
 again"). After execution we append this turn (user message + what we ran +
 short result summary) to session_memory for the next request. Capabilities
 never see session or memory—only RotomCore talks to memory.
+
+Phase 6: When session_id and context exist and a reference_resolver is injected,
+we first rewrite the user message (resolve "that", "it", "again" from context),
+then run intent classification on the rewritten message only. We still append
+the original user_input to memory so the stored conversation reflects what the
+user actually said.
 """
 import time
 from app.core.logger import get_logger
@@ -37,31 +43,47 @@ class RotomCore:
         registry,
         session_store,
         session_memory,
+        reference_resolver=None,
     ):
         logger.info("Rotom Core initialized")
         self.registry = registry
         self.intent_classifier = intent_classifier
         self.session_store = session_store
         self.session_memory = session_memory
+        # Phase 6: Optional. When set, we rewrite user message from context before classifying.
+        self.reference_resolver = reference_resolver
 
     def handle(self, user_input: str, session_id: str | None = None):
         """
-        Process one user message: get context from memory (if session), classify
-        intent, run the chosen capability, then write this turn back to memory.
+        Process one user message: get context from memory (if session), optionally
+        rewrite references (Phase 6), classify intent, run the chosen capability,
+        then write this turn back to memory. Memory always stores the original
+        user_input, not the rewritten message.
         """
         logger.debug("Input received")
 
         if session_id:
             self.session_store.get(session_id)  # ensure session exists
 
-        # Phase 5: Pull recent conversation for this session so the classifier
-        # can use it (e.g. to resolve "that" or "it" in the current message).
+        # Phase 5: Pull recent conversation for this session.
         context = ""
         if session_id:
             context = self.session_memory.get_context(session_id, max_turns=5) or ""
 
-        # Ask classifier: which capability + arguments? Pass context so LLM can use it.
-        intent_data = self.intent_classifier.classify(user_input, context=context or None)
+        # Phase 6: Resolve-then-classify. When we have context and a resolver,
+        # rewrite the message first so the classifier sees an explicit message only.
+        message_for_classifier = user_input
+        used_resolver = False
+        if session_id and context.strip() and self.reference_resolver is not None:
+            message_for_classifier = self.reference_resolver.resolve(user_input, context)
+            used_resolver = True
+
+        # Ask classifier: which capability + arguments? When we rewrote, pass
+        # context=None so the classifier prompt stays simple (no reference-resolution rules).
+        classifier_context = None if used_resolver else (context or None)
+        intent_data = self.intent_classifier.classify(
+            message_for_classifier, context=classifier_context
+        )
        
         # Defensive contract enforcement
         if not self._validate_intent_data(intent_data):

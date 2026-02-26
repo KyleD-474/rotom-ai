@@ -1,5 +1,5 @@
 # Rotom AI Orchestration System
-## Architecture Constitution (v1.5)
+## Architecture Constitution (v1.6)
 
 This document defines the structural, behavioral, and dependency rules of the Rotom system.
 All development must adhere to these constraints unless this document is explicitly revised.
@@ -38,7 +38,7 @@ For intended use cases (trip planning, research, developer automation, browser a
 LLM-based intent classification was introduced in v1.1.
 Structured invocation (capability + arguments) was introduced in v1.2.
 Metadata-driven prompt construction was introduced in v1.3.
-Argument validation before execution was introduced in v1.4. Session memory (context injection and turn storage) was introduced in v1.5.
+Argument validation before execution was introduced in v1.4. Session memory (context injection and turn storage) was introduced in v1.5. Reference resolution (resolve-then-classify) was introduced in v1.6.
 
 Execution remains single-step and deterministic today; the roadmap adds bounded multi-step planning and hybrid reasoning.
 
@@ -86,6 +86,7 @@ Constructs:
 - CapabilityRegistry
 - IntentClassifier implementation (LLM-backed)
 - LLMClient implementation (OpenAIClient currently)
+- ReferenceResolver implementation (LLMReferenceResolver, Phase 6)
 - RotomCore
 
 Must NOT:
@@ -101,6 +102,7 @@ Contains:
 - RotomCore
 - Intent classification abstractions
 - LLM client abstractions
+- Reference resolver abstractions (Phase 6)
 
 Responsibilities of RotomCore:
 - Orchestration
@@ -198,6 +200,7 @@ AgentService constructs:
 - CapabilityRegistry
 - IntentClassifier implementation (LLM-backed)
 - LLMClient implementation
+- ReferenceResolver implementation (Phase 6)
 - RotomCore
 
 RotomCore constructs nothing.
@@ -223,7 +226,7 @@ Session persistence must never leak into capabilities.
 
 ---
 
-# 5. Execution Contract (v1.5)
+# 5. Execution Contract (v1.6)
 
 Invocation contract:
 
@@ -235,16 +238,17 @@ Invocation contract:
 Execution flow:
 
 1. Receive input
-2. LLM classifies intent via metadata-driven structured JSON
-3. Validate invocation structure (`capability` + `arguments`)
-4. Validate capability against registry
-5. Construct CapabilityInvocation
-6. Validate arguments against capability argument_schema (Phase 4)
-7. Execute capability with structured arguments
-8. Catch unhandled exceptions
-9. Produce CapabilityResult
-10. Inject execution timing
-11. Return structured response
+2. (Phase 6, when session and context) Optionally rewrite user message via reference resolver; classifier then receives rewritten message only
+3. LLM classifies intent via metadata-driven structured JSON
+4. Validate invocation structure (`capability` + `arguments`)
+5. Validate capability against registry
+6. Construct CapabilityInvocation
+7. Validate arguments against capability argument_schema (Phase 4)
+8. Execute capability with structured arguments
+9. Catch unhandled exceptions
+10. Produce CapabilityResult
+11. Inject execution timing
+12. Return structured response
 
 Execution remains single-step and synchronous.
 
@@ -294,7 +298,7 @@ LLM integration must:
 
 Current state:
 
-- LLM is used for intent classification.
+- LLM is used for intent classification and for reference resolution (Phase 6).
 - Prompt construction is metadata-driven via CapabilityRegistry.
 - Structured JSON responses are enforced.
 - Defensive validation occurs prior to execution.
@@ -314,10 +318,10 @@ Implemented:
 - Metadata-driven orchestration (v1.3)
 - Argument validation layer (v1.4)
 - Session memory utilization (v1.5): context for intent classification, turn summaries per session
+- Reference resolution (v1.6): optional rewrite of user message from session context before intent classification (resolve-then-classify)
 
 Planned:
 
-- Reference resolution / input rewriting before intent classification (resolve-then-classify)
 - Iterative agent reasoning loop
 - Persistent session memory
 - Multi-step capability chaining
@@ -356,5 +360,5 @@ Architecture leads code.
 
 ---
 
-Version Updated: v1.5
+Version Updated: v1.6
 Document Updated: 2026-02-25

@@ -39,7 +39,7 @@ Project context and roadmap: **[AI_CONTEXT.md](AI_CONTEXT.md)**.
 
 ---
 
-## Current Features (v1.5)
+## Current Features (v1.6)
 
 - FastAPI endpoint: `/run`
 - LLM-based intent classification (OpenAI-backed, metadata-driven prompts)
@@ -49,6 +49,7 @@ Project context and roadmap: **[AI_CONTEXT.md](AI_CONTEXT.md)**.
 - Structured failure handling and execution timing injection
 - In-memory session store (non-persistent)
 - Session memory (Phase 5): context injected into intent classification; turn summaries stored per session when `session_id` is provided
+- Reference resolution (Phase 6): optional rewrite of user message from session context before classification (e.g. "do that again" / "1 more time" → prior message like "echo Phase 6 test"); classifier runs on rewritten message only
 - Dockerized deployment
 - Environment-based LLM configuration (`OPENAI_API_KEY`, `OPENAI_MODEL`)
 
@@ -69,7 +70,8 @@ rotom/
         ├── services/
         ├── agents/
         │   ├── intent/
-        │   └── llm/
+        │   ├── llm/
+        │   └── reference_resolver/
         ├── capabilities/
         ├── core/
         ├── models/
@@ -115,7 +117,7 @@ test_append_and_get_context_one_turn ... ok
 test_build_prompt_with_context_includes_it ... ok
 ...
 ----------------------------------------------------------------------
-Ran 10 tests in 0.123s
+Ran 16 tests in 0.123s
 OK
 ```
 
@@ -142,7 +144,7 @@ After changing code, you can rerun this command; no need to restart the long-run
 - ~~Metadata-driven orchestration~~ (v1.3)
 - ~~Argument validation layer~~ (v1.4)
 - ~~Session memory utilization~~ (v1.5, Phase 5)
-- Reference resolution / resolve-then-classify (Phase 6)
+- ~~Reference resolution / resolve-then-classify~~ (v1.6, Phase 6)
 - Tool result injection into LLM (Phase 7)
 - Iterative reasoning loop (bounded, max-iteration guard) (Phase 8)
 - Persistent storage (abstracted) (Phase 9)

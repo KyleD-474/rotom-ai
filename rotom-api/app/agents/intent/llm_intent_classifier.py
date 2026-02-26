@@ -1,7 +1,14 @@
 """
 LLM-backed intent classifier. Uses an LLM to turn user text into a
-structured capability + arguments. Phase 5: accepts optional context so
-the LLM can see recent conversation when classifying (e.g. "echo that again").
+structured capability + arguments.
+
+Phase 5: Accepts optional context so the LLM can see recent conversation when
+classifying (e.g. "echo that again") when no resolver is used.
+
+Phase 6: When the reference_resolver is used, RotomCore passes context=None
+and only the rewritten message (e.g. "echo hello"). The classifier then just
+maps that explicit message to capability + args—no reference-resolution rules
+in the prompt. This keeps the classifier simple and scalable.
 """
 import json
 from app.agents.intent.base_intent_classifier import BaseIntentClassifier
@@ -76,19 +83,18 @@ class LLMIntentClassifier(BaseIntentClassifier):
             for arg_name, arg_desc in tool["arguments"].items():
                 tools_section += f"  - {arg_name}: {arg_desc}\n"
 
-        # Phase 5: When context is present, we add it and one general principle:
-        # resolve references using context. We do NOT enumerate phrases ("that", "it", ...)—
-        # that doesn't scale. A scalable alternative (future) is a separate "resolve then classify"
-        # step: one call rewrites the user message to be unambiguous, then we classify the rewrite.
+        # Phase 5: When context is present, we add it so the LLM can see recent conversation.
+        # Phase 6: When the reference_resolver is used, RotomCore passes context=None here,
+        # so the classifier only sees the rewritten message and this block is omitted.
+        # We no longer ask the classifier to "fill from context"—reference resolution is
+        # handled by the resolver; the classifier just maps message → capability + args.
         context_block = ""
-        context_rule = ""
         if context and context.strip():
             context_block = f"""
 Recent context (for reference):
 {context.strip()}
 
 """
-            context_rule = "\n- If the current input refers to something in the recent context, fill argument values from that context (e.g. the prior message or result), not the literal wording of the input.\n"
 
         return f"""
 You are an intent classifier.
@@ -111,7 +117,7 @@ Rules:
 - Do NOT invent argument names.
 - Do NOT include explanations.
 - Do NOT include markdown.
-- Output JSON only.{context_rule}
+- Output JSON only.
 {context_block}
 User input:
 {user_input}

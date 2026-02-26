@@ -53,6 +53,7 @@ Constructs:
 - CapabilityRegistry
 - LLMClient (OpenAIClient)
 - IntentClassifier (LLMIntentClassifier)
+- ReferenceResolver (LLMReferenceResolver, Phase 6)
 - RotomCore
 
 RotomCore constructs nothing.
@@ -65,6 +66,7 @@ Contains:
 - RotomCore
 - IntentClassifier abstractions
 - LLM client abstractions
+- Reference resolver abstractions (Phase 6)
 
 ### RotomCore Responsibilities
 
@@ -135,14 +137,15 @@ Current invocation contract:
 Execution Flow:
 
 1. Receive input
-2. LLM classifies intent
-3. Validate structured invocation
-4. Resolve capability
-5. Execute capability with arguments
-6. Catch failures
-7. Produce CapabilityResult
-8. Inject execution timing
-9. Return structured response
+2. (Phase 6, when session + context) Optionally rewrite user message via reference resolver so references (“that”, “it”, “again”) are resolved; classifier then receives rewritten message only.
+3. LLM classifies intent
+4. Validate structured invocation
+5. Resolve capability
+6. Execute capability with arguments
+7. Catch failures
+8. Produce CapabilityResult
+9. Inject execution timing
+10. Return structured response
 
 No multi-step reasoning yet.
 
@@ -212,7 +215,7 @@ Prevents argument drift (e.g., "text" vs "message").
 
 ---
 
-# 6. Current Progress (v1.5)
+# 6. Current Progress (v1.6)
 
 Completed:
 
@@ -226,6 +229,7 @@ Completed:
 - Dockerized runtime
 - Argument validation layer (Phase 4): validate arguments against capability argument_schema before execution; required keys and no extra keys enforced
 - Session memory utilization (Phase 5): contextual memory injection, abstract BaseSessionMemory interface, intent classifier receives optional context, RotomCore reads context and appends turn summaries; capabilities do not access session or memory
+- Reference resolution (Phase 6): optional preprocessing via BaseReferenceResolver / LLMReferenceResolver; when session context exists, user message is rewritten to resolve references (“that”, “it”, “again”) before intent classification; classifier runs on rewritten message only; memory stores original user message
 
 System is stable and deterministic.
 
@@ -261,12 +265,13 @@ System is stable and deterministic.
 - Abstract memory behind interface
 - No capability access to session state
 
-## Phase 6 – Reference Resolution (Resolve-Then-Classify)
+## Phase 6 – Reference Resolution (Resolve-Then-Classify) ✓
 
 - Optional preprocessing step: given session context + raw user message, LLM produces a single **rewritten** message where references (“that”, “it”, “again”, etc.) are resolved from context.
 - Intent classification then runs on the rewritten message only; no need to hardcode referring phrases in the classifier.
 - Keeps classifier simple and scales to more tools and more complex context.
 - Still single-step execution; only the input to the classifier changes.
+- **Implemented:** Reference resolver in agent layer; RotomCore orchestrates resolve-then-classify when session + context + resolver present; original user message stored in memory.
 
 ## Phase 7 – Tool Result Injection
 

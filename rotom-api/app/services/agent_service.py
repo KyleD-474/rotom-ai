@@ -4,9 +4,10 @@ agent_service.py — Service layer: wires dependencies, exposes run()
 The API layer (FastAPI routes) calls AgentService.run(user_input, session_id).
 This class is responsible for *building* all the pieces RotomCore needs—session
 store, session memory (Phase 5), capability registry, LLM client, intent
-classifier—and injecting them into RotomCore. RotomCore itself creates nothing;
-it only receives dependencies. That way we can test RotomCore with mocks and
-swap implementations (e.g. different memory backend) in one place.
+classifier, and reference resolver (Phase 6)—and injecting them into RotomCore.
+RotomCore itself creates nothing; it only receives dependencies. That way we
+can test RotomCore with mocks and swap implementations (e.g. different memory
+backend) in one place.
 """
 
 from app.agents.rotom_core import RotomCore
@@ -18,6 +19,7 @@ from app.capabilities.registry import CapabilityRegistry
 # from app.agents.llm.dummy_llm_client import DummyLLMClient
 from app.agents.llm.openai_client import OpenAIClient
 from app.agents.intent.llm_intent_classifier import LLMIntentClassifier
+from app.agents.reference_resolver import LLMReferenceResolver
 
 logger = get_logger(__name__, layer="service", component="agent_service")
 
@@ -44,6 +46,9 @@ class AgentService:
             llm_client=llm_client,
             tool_metadata=tool_metadata,
         )
+        # Phase 6: Resolver rewrites user message from context before classification.
+        # We reuse the same llm_client so one provider serves both resolver and classifier.
+        reference_resolver = LLMReferenceResolver(llm_client=llm_client)
 
         # RotomCore gets everything via constructor—no hidden dependencies.
         self.rotom_core = RotomCore(
@@ -51,6 +56,7 @@ class AgentService:
             registry=registry,
             session_store=session_store,
             session_memory=session_memory,
+            reference_resolver=reference_resolver,
         )
 
     def run(self, user_input: str, session_id: str | None = None):
