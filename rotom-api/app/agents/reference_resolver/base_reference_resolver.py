@@ -1,5 +1,5 @@
 """
-base.py — Phase 6: Abstract interface for reference resolution
+base_reference_resolver.py — Phase 6: Abstract interface for reference resolution
 
 A reference resolver has one job: given the user's raw message and recent
 conversation context, return a single rewritten message where pronouns and

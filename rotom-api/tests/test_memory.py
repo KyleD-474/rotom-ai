@@ -1,7 +1,7 @@
 """
 Unit tests for Phase 5 session memory (InMemorySessionMemory).
 
-We test that:
+We test the real InMemorySessionMemory implementation (no mocks). We check:
   - Empty or missing session returns an empty context string.
   - Appending user + assistant entries and then get_context() returns a
     readable summary with "User: ..." and "Assistant ran ...; result: ...".
@@ -15,7 +15,14 @@ from app.core.memory import InMemorySessionMemory
 
 
 class TestInMemorySessionMemory(unittest.TestCase):
+    """
+    These tests use the real InMemorySessionMemory class. We create one,
+    call append() and get_context(), and assert the strings we get back.
+    No LLM, no RotomCore—just the memory store in isolation.
+    """
+
     def setUp(self):
+        # One real memory instance; max 20 entries per session (plenty for these tests).
         self.memory = InMemorySessionMemory(max_entries_per_session=20)
 
     def test_get_context_empty_returns_empty_string(self):
@@ -33,11 +40,11 @@ class TestInMemorySessionMemory(unittest.TestCase):
 
     def test_get_context_respects_max_turns(self):
         """Only the most recent max_turns turns should appear in the context string."""
-        # 3 full turns = 6 entries (user, assistant, user, assistant, ...)
+        # Add 3 full "turns": each turn = one user message + one assistant message = 2 entries.
         for i in range(3):
             self.memory.append("s1", {"role": "user", "content": f"msg{i}"})
             self.memory.append("s1", {"role": "assistant", "capability": "echo", "output_summary": f"msg{i}"})
-        # Ask for last 2 turns only → msg0 should be dropped
+        # Ask for only the last 2 turns. So the oldest turn (msg0) should be dropped.
         ctx = self.memory.get_context("s1", max_turns=2)
         self.assertIn("msg1", ctx)
         self.assertIn("msg2", ctx)

@@ -7,7 +7,7 @@ the recent context. It uses the same BaseLLMClient abstraction as the intent
 classifier so we can test with a mock and swap providers in one place.
 """
 
-from app.agents.reference_resolver.base import BaseReferenceResolver
+from app.agents.reference_resolver.base_reference_resolver import BaseReferenceResolver
 from app.agents.llm.base_llm_client import BaseLLMClient
 from app.core.logger import get_logger
 

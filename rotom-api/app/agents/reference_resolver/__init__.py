@@ -7,7 +7,7 @@ context before intent classification. The service layer imports from here to
 inject into RotomCore.
 """
 
-from app.agents.reference_resolver.base import BaseReferenceResolver
+from app.agents.reference_resolver.base_reference_resolver import BaseReferenceResolver
 from app.agents.reference_resolver.llm_resolver import LLMReferenceResolver
 
 __all__ = ["BaseReferenceResolver", "LLMReferenceResolver"]

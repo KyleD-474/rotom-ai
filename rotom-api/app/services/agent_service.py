@@ -20,6 +20,7 @@ from app.capabilities.registry import CapabilityRegistry
 from app.agents.llm.openai_client import OpenAIClient
 from app.agents.intent.llm_intent_classifier import LLMIntentClassifier
 from app.agents.reference_resolver import LLMReferenceResolver
+from app.agents.continuation import NoOpContinuationDecider
 
 logger = get_logger(__name__, layer="service", component="agent_service")
 
@@ -49,6 +50,8 @@ class AgentService:
         # Phase 6: Resolver rewrites user message from context before classification.
         # We reuse the same llm_client so one provider serves both resolver and classifier.
         reference_resolver = LLMReferenceResolver(llm_client=llm_client)
+        # Phase 7: Continuation decider runs after every capability run; no-op by default so we don't add an LLM call.
+        continuation_decider = NoOpContinuationDecider()
 
         # RotomCore gets everything via constructor—no hidden dependencies.
         self.rotom_core = RotomCore(
@@ -57,6 +60,7 @@ class AgentService:
             session_store=session_store,
             session_memory=session_memory,
             reference_resolver=reference_resolver,
+            continuation_decider=continuation_decider,
         )
 
     def run(self, user_input: str, session_id: str | None = None):

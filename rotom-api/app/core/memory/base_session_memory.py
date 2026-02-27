@@ -1,5 +1,5 @@
 """
-base.py — Phase 5: Session memory interface
+base_session_memory.py — Phase 5: Session memory interface
 
 This module defines the *contract* for session memory. We use an abstract
 interface (not a concrete class) so that:

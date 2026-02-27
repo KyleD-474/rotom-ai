@@ -100,9 +100,10 @@ Must NOT:
 
 Contains:
 - RotomCore
-- Intent classification abstractions
-- LLM client abstractions
-- Reference resolver abstractions (Phase 6)
+- Intent classification abstractions (base_intent_classifier.py)
+- LLM client abstractions (base_llm_client.py)
+- Reference resolver abstractions (base_reference_resolver.py, Phase 6)
+- Continuation decider abstractions (base_continuation_decider.py, Phase 7)
 
 Responsibilities of RotomCore:
 - Orchestration
@@ -154,6 +155,7 @@ Contains:
 - Logging configuration
 - Context utilities
 - Session store implementations
+- Session memory interface (base_session_memory.py: BaseSessionMemory)
 
 Must NOT:
 - Contain orchestration logic
@@ -309,6 +311,8 @@ Current state:
 
 LLM usage remains strictly bounded by RotomCore orchestration.
 
+When tool result injection is introduced (Phase 7), the LLM will receive capability results only for **structured reasoning continuation** (e.g. next-step decision, synthesis). The continuation response will be **structured** (e.g. done, next_capability, arguments), not free-form. Default response to the user remains the capability output unless the continuation contract explicitly provides a synthesized output.
+
 ---
 
 # 10. Future Expansion Vectors
@@ -322,7 +326,9 @@ Implemented:
 
 Planned:
 
-- Iterative agent reasoning loop
+- **Tool result injection (Phase 7):** Inject capability result into the LLM for **structured reasoning continuation only** (e.g. next-step decision, multi-result synthesis). Default: return capability output unchanged. Continuation is a **structured object** (e.g. done, next_capability, arguments, optional final_output), not free-form text.
+- **Iterative reasoning loop (Phase 8):** Loop that consumes the Phase 7 continuation contract until done or max iterations; no autonomous infinite loops.
+- **Response shaping:** User-facing “human-readable” or conversational response is **optional and capability-driven** (e.g. summarizer capability when user asks for summary), not a global LLM pass over every result.
 - Persistent session memory
 - Multi-step capability chaining
 - Tool + LLM hybrid execution
@@ -345,6 +351,7 @@ Not currently planned:
 - Session logic remains centralized.
 - All integrations are abstracted.
 - No premature complexity.
+- **No automatic LLM rewriting of every capability output** — Default is to return capability output as the response; the LLM does not automatically rewrite or polish every result for tone or readability. When result injection is used (e.g. Phase 7), the LLM returns a structured continuation, not free-form user-facing text unless explicitly part of the continuation contract.
 
 ---
 

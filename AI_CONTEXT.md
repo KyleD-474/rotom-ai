@@ -177,11 +177,14 @@ No multi-step reasoning yet.
 
 ## 5.2 Abstraction Boundaries
 
-- BaseIntentClassifier
-- BaseLLMClient
-- BaseCapability
+- BaseIntentClassifier (base_intent_classifier.py)
+- BaseLLMClient (base_llm_client.py)
+- BaseCapability (base_capability.py)
+- BaseSessionMemory (base_session_memory.py, Phase 5)
+- BaseReferenceResolver (base_reference_resolver.py, Phase 6)
+- BaseContinuationDecider (base_continuation_decider.py, Phase 7)
 
-Concrete implementations are swappable.
+Base interfaces live in descriptively named modules (base_*.py). Concrete implementations are swappable.
 
 ## 5.3 Pure Capability Pattern
 
@@ -212,6 +215,10 @@ LLMIntentClassifier builds prompt dynamically from:
 - Argument schemas
 
 Prevents argument drift (e.g., "text" vs "message").
+
+## 5.6 Response Shaping (Principle for Phase 7+)
+
+User-facing response shaping (e.g. summarization, conversational formatting) is **optional and capability-driven**, not a global post-step. A summarizer capability is invoked when the user asks for a summary; echo returns literal output. We do not mandate that every capability result be passed through the LLM for “human-readable” polish—that would reduce control and determinism.
 
 ---
 
@@ -273,18 +280,18 @@ System is stable and deterministic.
 - Still single-step execution; only the input to the classifier changes.
 - **Implemented:** Reference resolver in agent layer; RotomCore orchestrates resolve-then-classify when session + context + resolver present; original user message stored in memory.
 
-## Phase 7 – Tool Result Injection
+## Phase 7 – Tool Result Injection (Structured Reasoning Continuation)
 
-- Feed capability results back into LLM
-- Introduce structured reasoning continuation
-- Still bounded execution
+- **Scope:** Inject capability result into the LLM only when orchestration needs **reasoning or continuation** (e.g. “what do we do next?”, “combine these results”). Default behaviour: return the capability’s output as the response; no mandatory LLM pass for “conversational polish.”
+- **Structured continuation:** When the LLM sees the result, it returns a **structured object** (e.g. `done`, `next_capability`, `arguments`, optional `final_output`), not free-form text. This keeps control and parseability; the pipeline uses the last capability result as the response unless the continuation explicitly provides a synthesized output.
+- **Ties to Phase 8:** Phase 7 defines the continuation contract (result in → structured decision out). Phase 8 is the loop that consumes it (run until `done` or max iterations).
+- Still bounded execution; no automatic rewriting of every capability output.
 
 ## Phase 8 – Iterative Reasoning Loop
 
-- Multi-step planning
-- Max-iteration guard
-- Controlled loop inside RotomCore
-- No autonomous infinite loops
+- Multi-step planning using the **Phase 7 continuation contract**: after each capability run, result is injected; LLM returns structured continuation (`done` / `next_capability`); RotomCore loops until done or max-iteration guard.
+- Max-iteration guard; controlled loop inside RotomCore.
+- No autonomous infinite loops.
 
 ## Phase 9 – Persistent Storage
 
@@ -307,6 +314,7 @@ System is stable and deterministic.
 - Complex schema validation
 - Async concurrency
 - **Agent autonomy without bounds** — Rotom is always bounded; no uncontrolled loops or unbounded autonomy
+- **Automatic LLM rewriting of every capability output** — The LLM does not automatically rewrite or “polish” every capability result for tone or readability; default is to return capability output unchanged. Response shaping (e.g. summarization, formatting) is optional and capability-driven when needed.
 
 ---
 

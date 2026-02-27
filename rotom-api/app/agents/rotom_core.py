@@ -18,6 +18,12 @@ we first rewrite the user message (resolve "that", "it", "again" from context),
 then run intent classification on the rewritten message only. We still append
 the original user_input to memory so the stored conversation reflects what the
 user actually said.
+
+Phase 7: After a capability runs, we call the continuation_decider (if present)
+with the user message, capability name, and result. It returns a structured
+ContinuationResult (done, next_capability, etc.). In Phase 7 we do not use
+that to change the response—we still return the capability output. The call
+establishes the contract for Phase 8 to loop or use a synthesized reply.
 """
 import time
 from app.core.logger import get_logger
@@ -44,6 +50,7 @@ class RotomCore:
         session_store,
         session_memory,
         reference_resolver=None,
+        continuation_decider=None,
     ):
         logger.info("Rotom Core initialized")
         self.registry = registry
@@ -52,6 +59,8 @@ class RotomCore:
         self.session_memory = session_memory
         # Phase 6: Optional. When set, we rewrite user message from context before classifying.
         self.reference_resolver = reference_resolver
+        # Phase 7: Optional. When set, we call it after every capability run; it returns a structured continuation. We don't use the return to change the response yet.
+        self.continuation_decider = continuation_decider
 
     def handle(self, user_input: str, session_id: str | None = None):
         """
@@ -152,6 +161,11 @@ class RotomCore:
         # Session injection remains centralized in RotomCore.
         # Keep session visible internally.
         result.session_id = session_id
+
+        # Phase 7: Continuation step. If a decider is injected, call it with the result.
+        # We do not use the return value to change the response in Phase 7—we still return result.
+        if self.continuation_decider is not None:
+            self.continuation_decider.continue_(user_input, capability_name, result)
 
         # Phase 5: Save this turn to memory so the *next* request in this
         # session can see "user said X, we ran Y, result Z." We append two

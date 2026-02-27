@@ -1,0 +1,10 @@
+# Rotom project rules
+
+## Code comments and docstrings
+
+- Comment and document code so that a junior developer (or someone new to the codebase) can understand what is happening and why.
+- Use the same style as the rest of the project:
+  - Module-level docstring: one or two sentences on what the module does and how it fits in (e.g. "Phase 7: ...").
+  - Class docstring: responsibility of the class and when it is used.
+  - Method/function docstring: what it does, Args/Returns where helpful; for non-obvious logic, a short inline comment.
+- Do not over-comment obvious lines; focus on "why" and "what this is for" rather than restating the code.

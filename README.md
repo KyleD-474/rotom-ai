@@ -71,7 +71,8 @@ rotom/
         ├── agents/
         │   ├── intent/
         │   ├── llm/
-        │   └── reference_resolver/
+        │   ├── reference_resolver/
+        │   └── continuation/
         ├── capabilities/
         ├── core/
         ├── models/
@@ -145,8 +146,8 @@ After changing code, you can rerun this command; no need to restart the long-run
 - ~~Argument validation layer~~ (v1.4)
 - ~~Session memory utilization~~ (v1.5, Phase 5)
 - ~~Reference resolution / resolve-then-classify~~ (v1.6, Phase 6)
-- Tool result injection into LLM (Phase 7)
-- Iterative reasoning loop (bounded, max-iteration guard) (Phase 8)
+- Tool result injection (Phase 7): result into LLM for structured continuation only; default return capability output; no automatic rewriting of every result
+- Iterative reasoning loop (Phase 8): bounded loop using Phase 7 continuation contract; max-iteration guard
 - Persistent storage (abstracted) (Phase 9)
 - Hybrid tool + LLM execution (Phase 10)
 

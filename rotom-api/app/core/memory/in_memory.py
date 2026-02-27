@@ -10,7 +10,7 @@ interface.
 
 from typing import Dict, List
 
-from app.core.memory.base import BaseSessionMemory
+from app.core.memory.base_session_memory import BaseSessionMemory
 
 
 # Limit how many entries we keep per session so memory doesn't grow forever.

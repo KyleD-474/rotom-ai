@@ -13,14 +13,32 @@ from app.agents.intent.llm_intent_classifier import LLMIntentClassifier
 
 
 class MockLLMClient:
-    """Fake LLM that always returns valid JSON; used so we can test prompt building without API calls."""
+    """
+    A simple fake LLM client (not MagicMock—just a small class we wrote).
+    Whenever generate(prompt) is called, we return the same valid JSON so that
+    the classifier's .classify() method can run without error. We're not
+    testing what the LLM would really say; we're only testing that _build_prompt
+    produces a string that contains (or doesn't contain) "Recent context" and
+    the user input. So we never need to hit the real API.
+    """
     def generate(self, prompt: str) -> str:
         return '{"capability": "echo", "arguments": {"message": "hi"}}'
 
 
 class TestLLMIntentClassifierContext(unittest.TestCase):
+    """
+    We test the *prompt* that the intent classifier builds—not the LLM's answer.
+    We give it a MockLLMClient that always returns valid JSON, and we call
+    _build_prompt(user_input, context) with different contexts. Then we assert
+    the prompt string contains or doesn't contain "Recent context" and the
+    user message. So we're checking: "when we have context, does it show up
+    in the prompt? When we don't, is it omitted?"
+    """
+
     def setUp(self):
         self.client = MockLLMClient()
+        # tool_metadata: the list of capabilities the classifier knows about.
+        # We pass a minimal one (just echo) so the classifier can build a valid prompt.
         self.classifier = LLMIntentClassifier(
             llm_client=self.client,
             tool_metadata=[{"name": "echo", "description": "Echo", "arguments": {"message": "desc"}}],
