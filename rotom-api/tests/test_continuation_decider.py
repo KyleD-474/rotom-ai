@@ -33,18 +33,24 @@ class TestNoOpContinuationDecider(unittest.TestCase):
 
     def test_continue_returns_done_true(self):
         """continue_() should always return done=True and no next step or final_output."""
+
         # Build a fake "result" that looks like what a capability would return.
         # We're not running a real capability—we just need an object with the right shape.
         result = CapabilityResult(capability="echo", output="hello", success=True, metadata={})
+
         # Call the decider: "user said 'echo hello', we ran 'echo', here's the result."
         out = self.decider.continue_("echo hello", "echo", result)
+
         # The no-op should return a ContinuationResult (the structured answer).
         self.assertIsInstance(out, ContinuationResult)
+
         # Phase 7 no-op always says "we're done" (no next step).
         self.assertTrue(out.done)
+
         # It never asks to run another capability.
         self.assertIsNone(out.next_capability)
         self.assertIsNone(out.arguments)
+
         # It never provides a rewritten/synthesized reply.
         self.assertIsNone(out.final_output)
 
@@ -63,16 +69,19 @@ class TestLLMContinuationDecider(unittest.TestCase):
         # MagicMock() creates a fake object. Any attribute you access (like .generate)
         # is also a MagicMock. So self.llm_client.generate is a fake method.
         self.llm_client = MagicMock()
+
         # We pass this fake LLM client into the decider. When the decider calls
         # self.llm_client.generate(prompt), it will get whatever we set below.
         self.decider = LLMContinuationDecider(llm_client=self.llm_client)
 
     def test_continue_parses_json_returns_continuation_result(self):
         """When the LLM returns valid JSON, we get a ContinuationResult with those fields."""
+
         # Tell the fake: "when generate() is called, return this JSON string."
         # So our code will never hit the real OpenAI API—it just gets this string.
         self.llm_client.generate.return_value = '{"done": true, "next_capability": null, "arguments": null, "final_output": null}'
         result = CapabilityResult(capability="echo", output="hi", success=True, metadata={})
+        
         # The decider will build a prompt, call self.llm_client.generate(prompt),
         # get back the JSON string above, parse it, and return a ContinuationResult.
         out = self.decider.continue_("echo hi", "echo", result)
@@ -82,9 +91,9 @@ class TestLLMContinuationDecider(unittest.TestCase):
         self.assertIsNone(out.final_output)
 
     def test_continue_parses_done_false_and_next_capability(self):
-        """LLM can return done=false with next_capability and arguments for Phase 8."""
+        """LLM can return done=false with next_capability and arguments; Phase 8 loop consumes this to run another capability."""
         # Simulate the LLM saying "not done yet—run 'echo' with message 'again'."
-        # Phase 8 would use this to loop and run another capability.
+        # RotomCore's Phase 8 loop uses this to run the next capability and call continue_ again.
         self.llm_client.generate.return_value = '{"done": false, "next_capability": "echo", "arguments": {"message": "again"}, "final_output": null}'
         result = CapabilityResult(capability="echo", output="hi", success=True, metadata={})
         out = self.decider.continue_("do that again", "echo", result)

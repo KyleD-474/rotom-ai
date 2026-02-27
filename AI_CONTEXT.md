@@ -16,7 +16,7 @@ Rotom is not a chatbot. It is not an uncontrolled agent. It is an **AI orchestra
 For concrete use cases (trip planning, research, developer automation, browser automation, workflows, etc.), see **USECASES.md**.
 
 Execution is currently:
-- Single-step
+- Single-request, **bounded multi-step** (iterative loop inside RotomCore using Phase 7/8 continuation contract)
 - Synchronous
 - Deterministic
 - Stateless at capability layer
@@ -125,29 +125,33 @@ Registry decouples RotomCore from capability construction.
 
 ---
 
-# 3. Execution Contract (v1.2)
+# 3. Execution Contract (v1.7)
 
-Current invocation contract:
+Current invocation contract (per step in the loop):
 
     {
       "capability": "<string>",
       "arguments": { ... }
     }
 
-Execution Flow:
+Execution Flow (single request, possibly multi-step, always bounded):
 
-1. Receive input
-2. (Phase 6, when session + context) Optionally rewrite user message via reference resolver so references (“that”, “it”, “again”) are resolved; classifier then receives rewritten message only.
-3. LLM classifies intent
-4. Validate structured invocation
-5. Resolve capability
-6. Execute capability with arguments
-7. Catch failures
-8. Produce CapabilityResult
-9. Inject execution timing
-10. Return structured response
+1. Receive input.
+2. (Phase 5) Load recent session context for this session (if any) from session memory.
+3. (Phase 6, when session + context) Optionally rewrite user message via reference resolver so references (“that”, “it”, “again”) are resolved; classifier then receives **rewritten** message only.
+4. LLM classifies intent once → structured `{capability, arguments}`.
+5. Enter a bounded loop inside RotomCore (Phase 8):
+   - 5.1 Resolve capability from registry.
+   - 5.2 Validate invocation structure and arguments (Phase 4).
+   - 5.3 Execute capability with arguments; catch failures and wrap in `CapabilityResult`.
+   - 5.4 Inject execution timing and session_id into metadata.
+   - 5.5 Call continuation decider (Phase 7) with user input, capability name, and result → `ContinuationResult(done, next_capability, arguments, final_output)`.
+   - 5.6 Append this step to session memory (user message once on first iteration, assistant summary on every iteration).
+   - 5.7 If `done=True`, or max-iteration guard reached, or next step is invalid → exit loop.
+   - 5.8 Otherwise, set `capability = next_capability` and `arguments = arguments` from `ContinuationResult` and repeat.
+6. If the final `ContinuationResult` provides a non-empty `final_output`, we surface that as the returned `CapabilityResult.output` and mark metadata with `synthesized=True`; otherwise we return the last capability’s raw output.
 
-No multi-step reasoning yet.
+Multi-step reasoning is **bounded and explicit**: no unbounded loops, no hidden capability chaining.
 
 ---
 
@@ -237,6 +241,8 @@ Completed:
 - Argument validation layer (Phase 4): validate arguments against capability argument_schema before execution; required keys and no extra keys enforced
 - Session memory utilization (Phase 5): contextual memory injection, abstract BaseSessionMemory interface, intent classifier receives optional context, RotomCore reads context and appends turn summaries; capabilities do not access session or memory
 - Reference resolution (Phase 6): optional preprocessing via BaseReferenceResolver / LLMReferenceResolver; when session context exists, user message is rewritten to resolve references (“that”, “it”, “again”) before intent classification; classifier runs on rewritten message only; memory stores original user message
+- Tool result injection (Phase 7): continuation decider receives `CapabilityResult` and returns structured `ContinuationResult(done, next_capability, arguments, final_output)`; by default NoOpDecider says `done=True` with no next step.
+- Iterative reasoning loop (Phase 8): RotomCore consumes the Phase 7 continuation contract in a bounded loop (max-iteration guard) to support multi-step reasoning within a single request; optional `final_output` lets the decider synthesize a reply while preserving deterministic control.
 
 System is stable and deterministic.
 
@@ -280,18 +286,18 @@ System is stable and deterministic.
 - Still single-step execution; only the input to the classifier changes.
 - **Implemented:** Reference resolver in agent layer; RotomCore orchestrates resolve-then-classify when session + context + resolver present; original user message stored in memory.
 
-## Phase 7 – Tool Result Injection (Structured Reasoning Continuation)
+## Phase 7 – Tool Result Injection (Structured Reasoning Continuation) ✓
 
 - **Scope:** Inject capability result into the LLM only when orchestration needs **reasoning or continuation** (e.g. “what do we do next?”, “combine these results”). Default behaviour: return the capability’s output as the response; no mandatory LLM pass for “conversational polish.”
 - **Structured continuation:** When the LLM sees the result, it returns a **structured object** (e.g. `done`, `next_capability`, `arguments`, optional `final_output`), not free-form text. This keeps control and parseability; the pipeline uses the last capability result as the response unless the continuation explicitly provides a synthesized output.
-- **Ties to Phase 8:** Phase 7 defines the continuation contract (result in → structured decision out). Phase 8 is the loop that consumes it (run until `done` or max iterations).
+- **Contract for looping:** Phase 7 defines the continuation contract (result in → structured decision out). Phase 8 is the loop that consumes it (run until `done` or max iterations).
 - Still bounded execution; no automatic rewriting of every capability output.
 
-## Phase 8 – Iterative Reasoning Loop
+## Phase 8 – Iterative Reasoning Loop ✓
 
-- Multi-step planning using the **Phase 7 continuation contract**: after each capability run, result is injected; LLM returns structured continuation (`done` / `next_capability`); RotomCore loops until done or max-iteration guard.
-- Max-iteration guard; controlled loop inside RotomCore.
-- No autonomous infinite loops.
+- Multi-step planning using the **Phase 7 continuation contract**: after each capability run, result is injected; LLM returns structured continuation (`done` / `next_capability`); RotomCore loops until `done` or a max-iteration guard.
+- Max-iteration guard and defensive checks around `next_capability`/`arguments`; the loop always terminates and falls back to the last valid result on error.
+- Optional `final_output` lets the continuation decider synthesize a reply while still returning a structured `CapabilityResult` (with a `synthesized` metadata flag).
 
 ## Phase 9 – Persistent Storage
 

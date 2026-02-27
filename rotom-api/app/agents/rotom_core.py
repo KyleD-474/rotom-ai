@@ -21,19 +21,24 @@ user actually said.
 
 Phase 7: After a capability runs, we call the continuation_decider (if present)
 with the user message, capability name, and result. It returns a structured
-ContinuationResult (done, next_capability, etc.). In Phase 7 we do not use
-that to change the response—we still return the capability output. The call
-establishes the contract for Phase 8 to loop or use a synthesized reply.
+ContinuationResult (done, next_capability, etc.). Phase 8 uses that to loop.
+
+Phase 8: We loop until the decider returns done=True or we hit
+MAX_CONTINUATION_ITERATIONS. When done=False with next_capability/arguments,
+we run that capability and repeat. Optional final_output replaces the last
+result's output when set.
 """
 import time
 from app.core.logger import get_logger
 from app.models.capability_result import CapabilityResult
-from app.models.capability_invocation import CapabilityInvocation
 
 logger = get_logger(__name__, layer="agent", component="rotom_core")
 
 # When we store the capability result in memory we truncate output to avoid huge prompts.
 OUTPUT_SUMMARY_MAX_LEN = 200
+
+# Phase 8: Max capability runs per request; prevents unbounded loops when continuation says "not done".
+MAX_CONTINUATION_ITERATIONS = 5
 
 
 class RotomCore:
@@ -98,95 +103,111 @@ class RotomCore:
         if not self._validate_intent_data(intent_data):
             raise ValueError("IntentClassifier returned invalid invocation structure")
             
-        # Convert structured intent into internal invocation model
-        invocation = CapabilityInvocation(
-            capability_name=intent_data["capability"],
-            arguments=intent_data["arguments"],
-        )
+        # Convert structured intent into internal invocation model.
+        capability_name = intent_data["capability"]
+        arguments = intent_data["arguments"]
 
-        # Extract capabilty name from internal invocation model 
-        capability_name = invocation.capability_name
+        # Phase 8: Loop: run capability → continuation → append memory; repeat until done or max iterations.
+        result = None
+        iteration = 0
+        while iteration < MAX_CONTINUATION_ITERATIONS:
+            iteration += 1
+            logger.debug(f"Routing decision (iteration {iteration}): {capability_name}")
 
-        logger.debug(f"Routing decision: {capability_name}")
+            capability = self.registry.get(capability_name)
+            if not capability:
+                logger.error(
+                    "Capability not found.",
+                    extra={"event": "capability_error", "capability": capability_name},
+                )
+                raise ValueError(f"Capability '{capability_name}' not found")
 
-        # Find capability in registry
-        capability = self.registry.get(capability_name)
+            self._validate_arguments(capability_name, capability, arguments)
+            logger.debug(f"Execution started: {capability_name}")
 
-        if not capability:
-            logger.error(
-                "Capability not found.",
-                extra={
-                    "event": "capability_error",
-                    "capability": capability_name
-                }
+            start_time = time.perf_counter()
+            try:
+                result = capability.execute(arguments)
+            except Exception as e:
+                self._log_failure(capability_name, str(e))
+                result = CapabilityResult(
+                    capability=capability_name,
+                    output="",
+                    success=False,
+                    metadata={"error": str(e)},
+                )
+            end_time = time.perf_counter()
+            result.metadata["execution_time_ms"] = round(
+                (end_time - start_time) * 1000, 2
             )
-            raise ValueError(f"Capability '{capability_name}' not found")
+            result.session_id = session_id
 
-        # --- Phase 4: Argument validation (before execution) ---
-        self._validate_arguments(capability_name, capability, invocation.arguments)
+            # Phase 7/8: Continuation decider; when present we use its return to loop or apply final_output.
+            cont = None
+            if self.continuation_decider is not None:
+                cont = self.continuation_decider.continue_(
+                    user_input, capability_name, result
+                )
 
-        logger.debug(f"Execution started: {capability_name}")
+            # Phase 5: Append this step to memory. First iteration: user message + assistant; later: assistant only.
+            if session_id:
+                if iteration == 1:
+                    self.session_memory.append(
+                        session_id, {"role": "user", "content": user_input}
+                    )
+                output_summary = (result.output or "")[:OUTPUT_SUMMARY_MAX_LEN]
+                self.session_memory.append(
+                    session_id,
+                    {
+                        "role": "assistant",
+                        "capability": capability_name,
+                        "success": result.success,
+                        "output_summary": output_summary,
+                    },
+                )
 
-        start_time = time.perf_counter() # Measure execution time
-        
-        try:
-            # --- Phase 2: Execute with structured arguments ---
-            result = capability.execute(invocation.arguments)
-            error_message = None
+            logger.debug(f"Execution finished: {capability_name}")
 
-        except Exception as e:
-            # Catch any unhandled exception from capability
-            error_message = str(e)
-
-            # Log the error with structured context
-            self._log_failure(capability_name, error_message)
-            
-            # Create a fallback CapabilityResult
-            result = CapabilityResult(
-                capability=capability_name,
-                output="",
-                success=False,
-                metadata={
-                    "error": error_message
-                }
-            )
-
-        
-        end_time = time.perf_counter() # Capture execution timing
-        execution_time_ms = (end_time - start_time) * 1000
-
-        # Inject execution timing into metadata
-        result.metadata["execution_time_ms"] = round(execution_time_ms, 2)
-        
-        # Session injection remains centralized in RotomCore.
-        # Keep session visible internally.
-        result.session_id = session_id
-
-        # Phase 7: Continuation step. If a decider is injected, call it with the result.
-        # We do not use the return value to change the response in Phase 7—we still return result.
-        if self.continuation_decider is not None:
-            self.continuation_decider.continue_(user_input, capability_name, result)
-
-        # Phase 5: Save this turn to memory so the *next* request in this
-        # session can see "user said X, we ran Y, result Z." We append two
-        # entries: one for the user message, one for what we did.
-        if session_id:
-            self.session_memory.append(
-                session_id,
-                {"role": "user", "content": user_input},
-            )
-            output_summary = (result.output or "")[:OUTPUT_SUMMARY_MAX_LEN]
-            self.session_memory.append(
-                session_id,
-                {
-                    "role": "assistant",
-                    "capability": capability_name,
-                    "success": result.success,
-                    "output_summary": output_summary,
-                },
-            )
-        
-        logger.debug(f"Execution finished: {capability_name}")
+            # No decider => single-step (Phase 7 default); we're done.
+            if cont is None:
+                return result
+            # Decider says done: optionally surface final_output, then return.
+            if cont.done:
+                if cont.final_output is not None and cont.final_output.strip() != "":
+                    result = CapabilityResult(
+                        capability=result.capability,
+                        output=cont.final_output,
+                        success=result.success,
+                        metadata={**result.metadata, "synthesized": True},
+                        session_id=result.session_id,
+                    )
+                return result
+            # Hit max iterations: return last result.
+            if iteration >= MAX_CONTINUATION_ITERATIONS:
+                return result
+            # Continuation said not done but next step invalid: stop and return last result.
+            if not cont.next_capability or not isinstance(cont.arguments, dict):
+                logger.warning(
+                    "Continuation returned done=False but missing next_capability or arguments; stopping."
+                )
+                return result
+            next_cap = self.registry.get(cont.next_capability)
+            if not next_cap:
+                logger.warning(
+                    f"Continuation next_capability '{cont.next_capability}' not in registry; stopping."
+                )
+                return result
+            try:
+                self._validate_arguments(
+                    cont.next_capability, next_cap, cont.arguments
+                )
+            except ValueError:
+                logger.warning(
+                    "Continuation arguments invalid for next capability; stopping."
+                )
+                return result
+            capability_name = cont.next_capability
+            arguments = cont.arguments
 
         return result
     

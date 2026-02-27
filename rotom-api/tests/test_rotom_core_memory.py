@@ -1,6 +1,6 @@
 """
-Unit tests for Phase 5, Phase 6, and Phase 7: RotomCore's use of session memory,
-reference resolution, and continuation.
+Unit tests for Phase 5, Phase 6, Phase 7, and Phase 8: RotomCore's use of session memory,
+reference resolution, continuation, and the iterative loop.
 
 We use a real CapabilityRegistry and a real capability (echo), but we mock
 the session_store, session_memory, intent_classifier, and optionally reference_resolver
@@ -14,7 +14,7 @@ and continuation_decider. That lets us verify:
      the resolver and then classify(rewritten_message, context=None); memory still
      stores the original user message.
   5. Phase 7: When continuation_decider is present, we call continue_() after execution
-     but still return the same capability result and still append to memory.
+     and use the return value; Phase 8 loops when done=False with next_capability/arguments.
 No real LLM or memory backend is used—only mocks.
 """
 
@@ -26,7 +26,7 @@ import unittest
 # the right arguments?"
 from unittest.mock import MagicMock
 
-from app.agents.rotom_core import RotomCore
+from app.agents.rotom_core import RotomCore, MAX_CONTINUATION_ITERATIONS
 from app.capabilities.registry import CapabilityRegistry  # includes EchoCapability
 
 
@@ -170,9 +170,115 @@ class TestRotomCoreMemory(unittest.TestCase):
         self.assertEqual(call_args[0], "echo hello")
         self.assertEqual(call_args[1], "echo")
         self.assertEqual(call_args[2].output, "hello")
-        # Phase 7: we still return the capability result to the user (we ignore continuation output).
+        # Phase 7/8: with done=True we return the capability result (no loop).
         self.assertTrue(result.success)
         self.assertEqual(result.capability, "echo")
         self.assertEqual(result.output, "hello")
-        # Memory append still happens twice (user + assistant).
+        # Memory append: user + assistant once.
         self.assertEqual(self.session_memory.append.call_count, 2)
+
+    # --- Phase 8: Iterative loop tests ---
+
+    def test_handle_phase8_loop_when_continuation_says_not_done(self):
+        """Phase 8: When continuation returns done=False with next_capability/arguments, we run that capability and loop until done=True."""
+        continuation_decider = MagicMock()
+        # First call (after first echo): say "not done, run echo again with message 'second'."
+        # Second call (after second echo): say "done."
+        continuation_decider.continue_.side_effect = [
+            MagicMock(done=False, next_capability="echo", arguments={"message": "second"}, final_output=None),
+            MagicMock(done=True, next_capability=None, arguments=None, final_output=None),
+        ]
+        rotom = RotomCore(
+            intent_classifier=self.intent_classifier,
+            registry=self.registry,
+            session_store=self.session_store,
+            session_memory=self.session_memory,
+            continuation_decider=continuation_decider,
+        )
+        result = rotom.handle("echo hello", session_id="s1")
+        # Decider called twice: after first run and after second run.
+        self.assertEqual(continuation_decider.continue_.call_count, 2)
+        # First call: user_input, "echo", result with output "hello".
+        self.assertEqual(continuation_decider.continue_.call_args_list[0][0][2].output, "hello")
+        # Second call: user_input, "echo", result with output "second".
+        self.assertEqual(continuation_decider.continue_.call_args_list[1][0][2].output, "second")
+        # We return the last capability result (second run).
+        self.assertEqual(result.output, "second")
+        self.assertEqual(result.capability, "echo")
+        # Memory: user once, then assistant entry per step (2 steps -> 2 assistant entries).
+        self.assertEqual(self.session_memory.append.call_count, 1 + 2)
+
+    def test_handle_phase8_max_iteration_guard(self):
+        """Phase 8: When continuation always returns done=False, we stop after MAX_CONTINUATION_ITERATIONS and return last result."""
+        continuation_decider = MagicMock()
+        continuation_decider.continue_.return_value = MagicMock(
+            done=False, next_capability="echo", arguments={"message": "again"}, final_output=None
+        )
+        rotom = RotomCore(
+            intent_classifier=self.intent_classifier,
+            registry=self.registry,
+            session_store=self.session_store,
+            session_memory=self.session_memory,
+            continuation_decider=continuation_decider,
+        )
+        result = rotom.handle("echo hello", session_id="s1")
+        # Should have called continue_ once per iteration, and we stop at max iterations.
+        self.assertEqual(continuation_decider.continue_.call_count, MAX_CONTINUATION_ITERATIONS)
+        # Last result should be from the final echo run (output "again").
+        self.assertEqual(result.output, "again")
+        self.assertEqual(result.capability, "echo")
+
+    def test_handle_phase8_invalid_next_step_returns_last_result(self):
+        """Phase 8: When continuation returns done=False but next_capability is not in registry, we stop and return last result."""
+        continuation_decider = MagicMock()
+        continuation_decider.continue_.return_value = MagicMock(
+            done=False, next_capability="nonexistent_cap", arguments={"x": "y"}, final_output=None
+        )
+        rotom = RotomCore(
+            intent_classifier=self.intent_classifier,
+            registry=self.registry,
+            session_store=self.session_store,
+            session_memory=self.session_memory,
+            continuation_decider=continuation_decider,
+        )
+        result = rotom.handle("echo hello", session_id="s1")
+        # Decider called once; we try to resolve next_capability, fail, and return first result.
+        self.assertEqual(continuation_decider.continue_.call_count, 1)
+        self.assertEqual(result.output, "hello")
+        self.assertEqual(result.capability, "echo")
+
+    def test_handle_phase8_missing_next_capability_or_arguments_stops_loop(self):
+        """Phase 8: When continuation returns done=False but next_capability or arguments missing, we stop and return last result."""
+        continuation_decider = MagicMock()
+        continuation_decider.continue_.return_value = MagicMock(
+            done=False, next_capability=None, arguments=None, final_output=None
+        )
+        rotom = RotomCore(
+            intent_classifier=self.intent_classifier,
+            registry=self.registry,
+            session_store=self.session_store,
+            session_memory=self.session_memory,
+            continuation_decider=continuation_decider,
+        )
+        result = rotom.handle("echo hello", session_id="s1")
+        self.assertEqual(continuation_decider.continue_.call_count, 1)
+        self.assertEqual(result.output, "hello")
+        self.assertEqual(result.capability, "echo")
+
+    def test_handle_phase8_final_output_surfaces_synthesized_reply(self):
+        """Phase 8: When continuation returns done=True with final_output set, we return a result with that output and synthesized metadata."""
+        continuation_decider = MagicMock()
+        continuation_decider.continue_.return_value = MagicMock(
+            done=True, next_capability=None, arguments=None, final_output="Here is a summary: hello"
+        )
+        rotom = RotomCore(
+            intent_classifier=self.intent_classifier,
+            registry=self.registry,
+            session_store=self.session_store,
+            session_memory=self.session_memory,
+            continuation_decider=continuation_decider,
+        )
+        result = rotom.handle("echo hello", session_id="s1")
+        self.assertEqual(result.output, "Here is a summary: hello")
+        self.assertTrue(result.metadata.get("synthesized"))
+        self.assertEqual(result.capability, "echo")
