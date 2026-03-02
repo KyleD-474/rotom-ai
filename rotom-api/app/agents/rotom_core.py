@@ -28,6 +28,7 @@ MAX_CONTINUATION_ITERATIONS. When done=False with next_capability/arguments,
 we run that capability and repeat. Optional final_output replaces the last
 result's output when set.
 """
+import json
 import time
 from app.core.logger import get_logger
 from app.models.capability_result import CapabilityResult
@@ -74,7 +75,7 @@ class RotomCore:
         then write this turn back to memory. Memory always stores the original
         user_input, not the rewritten message.
         """
-        logger.debug("Input received")
+        logger.debug(f"Beginning handle() method.\nInput received: {user_input}")
 
         if session_id:
             self.session_store.get(session_id)  # ensure session exists
@@ -101,6 +102,7 @@ class RotomCore:
        
         # Defensive contract enforcement
         if not self._validate_intent_data(intent_data):
+            logger.error(f"IntentClassifier returned invalid invocation structure.\nIntent data:\n{json.dumps(intent_data, indent=4)}")
             raise ValueError("IntentClassifier returned invalid invocation structure")
             
         # Convert structured intent into internal invocation model.
@@ -112,24 +114,27 @@ class RotomCore:
         iteration = 0
         while iteration < MAX_CONTINUATION_ITERATIONS:
             iteration += 1
-            logger.debug(f"Routing decision (iteration {iteration}): {capability_name}")
+            
+            logger.debug(
+                f"Continuation iteration start:\n"+
+                f"iteration: {iteration}\n"+
+                f"capability: {capability_name}\n"+
+                f"arguments: \n{json.dumps(arguments, indent=4)}\n"
+            )
 
             capability = self.registry.get(capability_name)
             if not capability:
-                logger.error(
-                    "Capability not found.",
-                    extra={"event": "capability_error", "capability": capability_name},
-                )
+                logger.error(f"Capability not found.\nCapability name: {capability_name}")
                 raise ValueError(f"Capability '{capability_name}' not found")
 
             self._validate_arguments(capability_name, capability, arguments)
-            logger.debug(f"Execution started: {capability_name}")
+            logger.debug(f"Arguments validated successfully.\nCapability name: {capability_name}\nArguments:\n{json.dumps(arguments, indent=4)}")
 
             start_time = time.perf_counter()
             try:
                 result = capability.execute(arguments)
             except Exception as e:
-                self._log_failure(capability_name, str(e))
+                logger.error(f"Capability execution failed.\nCapability name: {capability_name}\nError: {str(e)}")
                 result = CapabilityResult(
                     capability=capability_name,
                     output="",
@@ -137,18 +142,23 @@ class RotomCore:
                     metadata={"error": str(e)},
                 )
             end_time = time.perf_counter()
-            result.metadata["execution_time_ms"] = round(
-                (end_time - start_time) * 1000, 2
-            )
+            result.metadata["execution_time_ms"] = round((end_time - start_time) * 1000, 2)
             result.session_id = session_id
+            # Phase 8: Observability — which iteration this step was, and total so far (updated each iteration).
+            result.metadata["continuation_iteration"] = iteration
+            result.metadata["continuation_total_iterations"] = iteration
 
             # Phase 7/8: Continuation decider; when present we use its return to loop or apply final_output.
             cont = None
             if self.continuation_decider is not None:
-                cont = self.continuation_decider.continue_(
-                    user_input, capability_name, result
+                cont = self.continuation_decider.continue_(user_input, capability_name, result)
+                logger.debug(
+                    f"Continuation decision from llm continuation decider:\n"+
+                    f"iteration: {iteration}\n"+
+                    f"done: {bool(cont.done)}\n"+
+                    f"next_capability: {getattr(cont, "next_capability", None)}\n"+
+                    f"has_final_output: {bool(getattr(cont, "final_output", None) and (cont.final_output or "").strip() != "")}\n",
                 )
-
             # Phase 5: Append this step to memory. First iteration: user message + assistant; later: assistant only.
             if session_id:
                 if iteration == 1:
@@ -184,17 +194,37 @@ class RotomCore:
                 return result
             # Hit max iterations: return last result.
             if iteration >= MAX_CONTINUATION_ITERATIONS:
+                logger.warning(
+                    "continuation_max_iterations_reached",
+                    extra={
+                        "event": "continuation_max_iterations_reached",
+                        "iteration": iteration,
+                        "max_iterations": MAX_CONTINUATION_ITERATIONS,
+                        "capability": result.capability,
+                    },
+                )
                 return result
             # Continuation said not done but next step invalid: stop and return last result.
             if not cont.next_capability or not isinstance(cont.arguments, dict):
                 logger.warning(
-                    "Continuation returned done=False but missing next_capability or arguments; stopping."
+                    "Continuation returned done=False but missing next_capability or arguments; stopping.",
+                    extra={
+                        "event": "continuation_invalid_next",
+                        "iteration": iteration,
+                        "capability": result.capability,
+                    },
                 )
                 return result
             next_cap = self.registry.get(cont.next_capability)
             if not next_cap:
                 logger.warning(
-                    f"Continuation next_capability '{cont.next_capability}' not in registry; stopping."
+                    "Continuation next_capability not in registry; stopping.",
+                    extra={
+                        "event": "continuation_unknown_capability",
+                        "iteration": iteration,
+                        "next_capability": cont.next_capability,
+                        "capability": result.capability,
+                    },
                 )
                 return result
             try:
@@ -203,33 +233,24 @@ class RotomCore:
                 )
             except ValueError:
                 logger.warning(
-                    "Continuation arguments invalid for next capability; stopping."
+                    "Continuation arguments invalid for next capability; stopping.",
+                    extra={
+                        "event": "continuation_invalid_arguments",
+                        "iteration": iteration,
+                        "next_capability": cont.next_capability,
+                        "capability": result.capability,
+                    },
                 )
                 return result
             capability_name = cont.next_capability
             arguments = cont.arguments
 
         return result
-    
-
-
-    def _log_failure(self, capability_name: str, error_message: str):
-        """
-        Centralized failure logging for capability execution.
-        """
-        logger.error(
-            f"Capability execution failed: {capability_name}",
-            extra={
-                "error": error_message,
-                "capability": capability_name
-            }
-        )
 
 
     def _validate_intent_data(self, intent_data) -> bool:
         """
         Ensures the IntentClassifier returned a structurally valid invocation contract.
-
         This protects RotomCore from contract drift or misbehaving classifier implementations.
         """
         return (

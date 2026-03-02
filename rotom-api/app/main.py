@@ -2,13 +2,18 @@
 main.py — Application entry point for the Rotom API
 
 This file is what gets run (e.g. by uvicorn). It:
-  1. Sets up logging once so every module gets consistent format and level.
-  2. Creates the FastAPI app and attaches middleware that assigns each request
+  1. Loads environment from .env if present (e.g. ROTOM_CONTINUATION_MODE, OPENAI_*).
+  2. Sets up logging once so every module gets consistent format and level.
+  3. Creates the FastAPI app and attaches middleware that assigns each request
      a unique request_id (stored in contextvars) so logs can be traced per request.
-  3. Registers the API routes (e.g. POST /run, GET /health).
+  4. Registers the API routes (e.g. POST /run, GET /health).
 
 We do not put business logic here—only wiring and configuration.
 """
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from fastapi import FastAPI, Request
 

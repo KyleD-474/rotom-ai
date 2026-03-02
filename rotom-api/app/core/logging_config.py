@@ -24,7 +24,7 @@ from pythonjsonlogger import jsonlogger
 def setup_logging():
     """Configure the root logger: level, output stream, and format (dev vs prod JSON)."""
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
     handler = logging.StreamHandler(sys.stdout)
 

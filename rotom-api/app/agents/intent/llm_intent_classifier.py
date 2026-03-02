@@ -37,33 +37,45 @@ class LLMIntentClassifier(BaseIntentClassifier):
         Build a prompt (including context if provided), call the LLM, then
         parse and validate the JSON response. Returns {"capability": str, "arguments": dict}.
         """
+        logger.debug(f"Classifying intent for user input.\nUser input:\n{user_input}\nContext:\n{context}")
+        logger.debug(f"Building prompt for llm intent classification.\nTool metadata:\n{self.tool_metadata}")
+
         prompt = self._build_prompt(user_input, context=context)
-
-        logger.info(f"prompt: {prompt}")
-
+        
+        logger.debug(f"Prompt for llm intent classification:\n{prompt}")
+        
         raw_output = self.llm_client.generate(prompt)
 
-        logger.info(f"raw_output: {raw_output}")
+        logger.debug(f"Raw output (response) from llm intent classification:\n{raw_output}")
 
         try:
             parsed = json.loads(raw_output)
+
+            logger.debug(f"Parsed output (response) from llm intent classification:\n{json.dumps(parsed, indent=4)}")
+
             capability = parsed.get("capability")
+
+            logger.debug(f"Capability (response)from llm intent classification:\n{capability}")
 
             if not isinstance(capability, str) or not capability.strip():
                 raise ValueError("'capability' must be a non-empty string")
 
             capability = capability.strip()
             valid_names = [tool["name"] for tool in self.tool_metadata]
+
             if capability not in valid_names:
+                logger.error(f"Invalid capability returned by LLM: {capability}")
                 raise ValueError(f"Invalid capability returned by LLM: {capability}")
 
             arguments = parsed.get("arguments", {})
             if not isinstance(arguments, dict):
+                logger.error(f"Invalid arguments returned by LLM: {arguments}")
                 raise ValueError("'arguments' must be a JSON object")
 
             return {"capability": capability, "arguments": arguments}
 
         except Exception as e:
+            logger.error(f"Failed to parse LLM intent response: {e}", extra={"error": str(e)})
             raise ValueError(f"Failed to parse LLM intent response: {e}")
 
     def _build_prompt(self, user_input: str, context: str | None = None) -> str:
@@ -74,7 +86,7 @@ class LLMIntentClassifier(BaseIntentClassifier):
         this formatted context string.
         """
         tools_section = ""
-
+        
         for tool in self.tool_metadata:
             tools_section += f"\nTool: {tool['name']}\n"
             tools_section += f"Description: {tool['description']}\n"
@@ -82,6 +94,8 @@ class LLMIntentClassifier(BaseIntentClassifier):
 
             for arg_name, arg_desc in tool["arguments"].items():
                 tools_section += f"  - {arg_name}: {arg_desc}\n"
+
+        logger.debug(f"Tools section for intent classification: {tools_section}")
 
         # Phase 5: When context is present, we add it so the LLM can see recent conversation.
         # Phase 6: When the reference_resolver is used, RotomCore passes context=None here,
@@ -95,6 +109,8 @@ Recent context (for reference):
 {context.strip()}
 
 """
+
+        logger.debug(f"Context block for llm intent classification:\n{context_block}")
 
         return f"""
 You are an intent classifier.

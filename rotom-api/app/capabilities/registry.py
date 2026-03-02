@@ -7,22 +7,39 @@ orchestration decoupled from capability construction and makes it easy to add
 or swap capabilities in one place. The intent classifier (LLM) gets its list
 of "available tools" from list_metadata(), so the prompt always matches what
 the registry actually has.
+
+The registry does not create capabilities in production: the service layer
+builds the list (e.g. SummarizerStubCapability(llm_client=llm_client)) and
+passes it in. When capabilities is omitted (e.g. tests calling CapabilityRegistry()),
+_default_capabilities() is used — summarizer then has no LLM (stub-only behavior).
 """
 
 from app.capabilities.echo import EchoCapability
 from app.capabilities.summarizer_stub import SummarizerStubCapability
+from app.capabilities.word_count import WordCountCapability
 from app.core.logger import get_logger
 
 logger = get_logger(__name__, layer="capability", component="registry")
 
 
-class CapabilityRegistry:
-    """Holds capability instances by name. Built at startup with the current set of capabilities."""
+def _default_capabilities():
+    """Default capability list: no injected LLM, for tests and backward compatibility."""
+    return [EchoCapability(), SummarizerStubCapability(), WordCountCapability()]
 
-    def __init__(self):
+
+class CapabilityRegistry:
+    """
+    Holds capability instances by name. Built at startup with the current set of capabilities.
+    Pass capabilities to inject service-built instances (e.g. summarizer with llm_client).
+    """
+
+    def __init__(self, capabilities=None):
         logger.debug("Capability Registry initialized")
-        capabilities = [EchoCapability(), SummarizerStubCapability()]
-        self._capabilities = {capability.name: capability for capability in capabilities}
+        if capabilities is not None:
+            cap_list = capabilities
+        else:
+            cap_list = _default_capabilities()
+        self._capabilities = {capability.name: capability for capability in cap_list}
 
     def get(self, name: str):
         """Return the capability with this name, or None if not found. RotomCore uses this to execute."""
