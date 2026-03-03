@@ -37,24 +37,18 @@ class LLMIntentClassifier(BaseIntentClassifier):
         Build a prompt (including context if provided), call the LLM, then
         parse and validate the JSON response. Returns {"capability": str, "arguments": dict}.
         """
-        logger.debug(f"Classifying intent for user input.\nUser input:\n{user_input}\nContext:\n{context}")
-        logger.debug(f"Building prompt for llm intent classification.\nTool metadata:\n{self.tool_metadata}")
+        logger.debug(f"Classifying intent for user input.\nUser input:\n{user_input}\nContext:\n{context} \nTool metadata:\n{json.dumps(self.tool_metadata, indent=2)}")
 
         prompt = self._build_prompt(user_input, context=context)
-        
         logger.debug(f"Prompt for llm intent classification:\n{prompt}")
-        
         raw_output = self.llm_client.generate(prompt)
-
         logger.debug(f"Raw output (response) from llm intent classification:\n{raw_output}")
 
         try:
             parsed = json.loads(raw_output)
-
-            logger.debug(f"Parsed output (response) from llm intent classification:\n{json.dumps(parsed, indent=4)}")
+            logger.debug(f"Parsed output (response) from llm intent classification:\n{json.dumps(parsed, indent=2)}")
 
             capability = parsed.get("capability")
-
             logger.debug(f"Capability (response)from llm intent classification:\n{capability}")
 
             if not isinstance(capability, str) or not capability.strip():
@@ -95,8 +89,6 @@ class LLMIntentClassifier(BaseIntentClassifier):
             for arg_name, arg_desc in tool["arguments"].items():
                 tools_section += f"  - {arg_name}: {arg_desc}\n"
 
-        logger.debug(f"Tools section for intent classification: {tools_section}")
-
         # Phase 5: When context is present, we add it so the LLM can see recent conversation.
         # Phase 6: When the reference_resolver is used, RotomCore passes context=None here,
         # so the classifier only sees the rewritten message and this block is omitted.
@@ -109,9 +101,6 @@ Recent context (for reference):
 {context.strip()}
 
 """
-
-        logger.debug(f"Context block for llm intent classification:\n{context_block}")
-
         return f"""
 You are an intent classifier.
 

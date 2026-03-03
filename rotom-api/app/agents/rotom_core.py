@@ -27,6 +27,11 @@ Phase 8: We loop until the decider returns done=True or we hit
 MAX_CONTINUATION_ITERATIONS. When done=False with next_capability/arguments,
 we run that capability and repeat. Optional final_output replaces the last
 result's output when set.
+
+Phase 8.5: When plan_builder, goal_checker, and response_formatter are all
+injected, we use the goals-based path: build plan (list of goals), then for
+each goal run classifier(goal, context) → capability → goal_checker; accumulate
+output_data; when all goals satisfied, response_formatter produces final output.
 """
 import json
 import time
@@ -40,6 +45,9 @@ OUTPUT_SUMMARY_MAX_LEN = 200
 
 # Phase 8: Max capability runs per request; prevents unbounded loops when continuation says "not done".
 MAX_CONTINUATION_ITERATIONS = 5
+
+# Phase 8.5: Max total capability runs across all goals (prevents runaway execution).
+MAX_GOALS_ITERATIONS = 12
 
 
 class RotomCore:
@@ -57,6 +65,9 @@ class RotomCore:
         session_memory,
         reference_resolver=None,
         continuation_decider=None,
+        plan_builder=None,
+        goal_checker=None,
+        response_formatter=None,
     ):
         logger.info("Rotom Core initialized")
         self.registry = registry
@@ -65,8 +76,12 @@ class RotomCore:
         self.session_memory = session_memory
         # Phase 6: Optional. When set, we rewrite user message from context before classifying.
         self.reference_resolver = reference_resolver
-        # Phase 7: Optional. When set, we call it after every capability run; it returns a structured continuation. We don't use the return to change the response yet.
+        # Phase 7: Optional. When set, we call it after every capability run; it returns a structured continuation.
         self.continuation_decider = continuation_decider
+        # Phase 8.5: When all three are set, we use goals-based multi-step instead of continuation decider.
+        self.plan_builder = plan_builder
+        self.goal_checker = goal_checker
+        self.response_formatter = response_formatter
 
     def handle(self, user_input: str, session_id: str | None = None):
         """
@@ -75,7 +90,7 @@ class RotomCore:
         then write this turn back to memory. Memory always stores the original
         user_input, not the rewritten message.
         """
-        logger.debug(f"Beginning handle() method.\nInput received: {user_input}")
+        logger.debug("Beginning handle() method.", extra={"user_input_preview": (user_input or "")[:200]})
 
         if session_id:
             self.session_store.get(session_id)  # ensure session exists
@@ -92,6 +107,10 @@ class RotomCore:
         if session_id and context.strip() and self.reference_resolver is not None:
             message_for_classifier = self.reference_resolver.resolve(user_input, context)
             used_resolver = True
+
+        # Phase 8.5: Goals-based path when plan_builder, goal_checker, and response_formatter are all set.
+        if self.plan_builder is not None and self.goal_checker is not None and self.response_formatter is not None:
+            return self._handle_goals_based(user_input, session_id)
 
         # Ask classifier: which capability + arguments? When we rewrote, pass
         # context=None so the classifier prompt stays simple (no reference-resolution rules).
@@ -152,12 +171,15 @@ class RotomCore:
             cont = None
             if self.continuation_decider is not None:
                 cont = self.continuation_decider.continue_(user_input, capability_name, result)
+                next_cap = getattr(cont, "next_capability", None)
+                final_out = getattr(cont, "final_output", None)
+                has_final = bool(final_out and (final_out or "").strip() != "")
                 logger.debug(
-                    f"Continuation decision from llm continuation decider:\n"+
-                    f"iteration: {iteration}\n"+
-                    f"done: {bool(cont.done)}\n"+
-                    f"next_capability: {getattr(cont, "next_capability", None)}\n"+
-                    f"has_final_output: {bool(getattr(cont, "final_output", None) and (cont.final_output or "").strip() != "")}\n",
+                    "Continuation decision from llm continuation decider: iteration=%s done=%s next_capability=%s has_final_output=%s",
+                    iteration,
+                    bool(cont.done),
+                    next_cap,
+                    has_final,
                 )
             # Phase 5: Append this step to memory. First iteration: user message + assistant; later: assistant only.
             if session_id:
@@ -247,6 +269,108 @@ class RotomCore:
 
         return result
 
+    def _handle_goals_based(self, user_input: str, session_id: str | None):
+        """
+        Phase 8.5: Build plan (goals), for each goal run classifier → capability → goal_checker,
+        accumulate output_data, then response_formatter for final output.
+        """
+        goals = self.plan_builder.build_plan(user_input)
+        logger.debug("Goals-based plan built", extra={"goals_count": len(goals), "goals": goals})
+
+        output_data = []
+        total_steps = 0
+        first_step_this_request = True
+
+        for goal_index, goal in enumerate(goals):
+            if total_steps >= MAX_GOALS_ITERATIONS:
+                logger.warning("Phase 8.5 max iterations reached; formatting with partial results")
+                break
+            satisfied = False
+            while not satisfied and total_steps < MAX_GOALS_ITERATIONS:
+                # Context for classifier: always include original user input so goals like "summarize the text"
+                # can see the text; also include last step result so "word count of the summary" can use it.
+                original_chunk = (user_input or "").strip()[:3500]
+                if not output_data:
+                    step_context = original_chunk
+                else:
+                    last_output = (output_data[-1].get("output") or "").strip()[:1000]
+                    step_context = f"Original user input (use for 'the text' / 'original text' when needed):\n{original_chunk}\n\nPrevious step result:\n{last_output}"
+
+                intent_data = self.intent_classifier.classify(goal, context=step_context if step_context.strip() else None)
+                if not self._validate_intent_data(intent_data):
+                    logger.warning("Intent classifier returned invalid data for goal; skipping to next goal", extra={"goal": goal})
+                    satisfied = True
+                    break
+
+                capability_name = intent_data["capability"]
+                arguments = intent_data["arguments"]
+
+                capability = self.registry.get(capability_name)
+                if not capability:
+                    logger.warning("Capability not found for goal; skipping to next goal", extra={"goal": goal, "capability": capability_name})
+                    satisfied = True
+                    break
+
+                try:
+                    self._validate_arguments(capability_name, capability, arguments)
+                except ValueError as e:
+                    logger.warning("Invalid arguments for goal; skipping to next goal", extra={"goal": goal, "error": str(e)})
+                    satisfied = True
+                    break
+
+                start_time = time.perf_counter()
+                try:
+                    result = capability.execute(arguments)
+                except Exception as e:
+                    logger.error("Capability execution failed in goals path", extra={"capability": capability_name, "error": str(e)})
+                    result = CapabilityResult(
+                        capability=capability_name,
+                        output="",
+                        success=False,
+                        metadata={"error": str(e)},
+                    )
+                end_time = time.perf_counter()
+                result.metadata["execution_time_ms"] = round((end_time - start_time) * 1000, 2)
+                result.session_id = session_id
+
+                output_data.append({
+                    "goal": goal,
+                    "capability": capability_name,
+                    "output": result.output or "",
+                    "success": result.success,
+                })
+                total_steps += 1
+
+                if session_id:
+                    if first_step_this_request:
+                        self.session_memory.append(session_id, {"role": "user", "content": user_input})
+                        first_step_this_request = False
+                    out_summary = (result.output or "")[:OUTPUT_SUMMARY_MAX_LEN]
+                    self.session_memory.append(
+                        session_id,
+                        {"role": "assistant", "capability": capability_name, "success": result.success, "output_summary": out_summary},
+                    )
+
+                check_result = self.goal_checker.check(goal, capability_name, result)
+                if check_result.output_snippet:
+                    output_data[-1]["snippet"] = check_result.output_snippet
+                if check_result.satisfied:
+                    satisfied = True
+                    logger.debug("Goal satisfied", extra={"goal": goal, "step": total_steps})
+
+        final_output = self.response_formatter.format_response(user_input, output_data, goals)
+        last_cap = output_data[-1]["capability"] if output_data else "goals"
+        return CapabilityResult(
+            capability=last_cap,
+            output=final_output,
+            success=bool(output_data),
+            metadata={
+                "synthesized": True,
+                "goals_completed": len(goals),
+                "goals_steps": total_steps,
+            },
+            session_id=session_id,
+        )
 
     def _validate_intent_data(self, intent_data) -> bool:
         """

@@ -330,6 +330,7 @@ Implemented:
 
 Planned:
 
+- **Phase 8.5 – Goals-based multi-step:** Plan builder (user_input → list of goals); per-goal loop with intent classifier (goal + context → capability + args) and goal checker (goal + run + result → satisfied?); accumulated output_data; response formatter for final user reply. Replaces continuation decider for the goals-based path. See rotom-api/docs/PHASE8_5_PLAN.md.
 - **Response shaping:** User-facing “human-readable” or conversational response is **optional and capability-driven** (e.g. summarizer capability when user asks for summary), not a global LLM pass over every result.
 - Persistent session memory
 - Multi-step capability chaining

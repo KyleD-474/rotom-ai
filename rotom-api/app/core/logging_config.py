@@ -31,11 +31,29 @@ def setup_logging():
     log_mode = os.getenv("LOG_MODE", "dev").lower()
     if log_mode == "prod":
         formatter = jsonlogger.JsonFormatter(
-            rename_fields={"levelname": "level", "asctime": "timestamp"}
+            fmt="%(asctime)s %(levelname)s %(name)s %(message)s",
+            rename_fields={"levelname": "level", "asctime": "timestamp"},
+            datefmt="%H:%M:%S"
         )
     else:
-        formatter = logging.Formatter("[%(levelname)s] %(message)s")
+        # formatter = logging.Formatter("[%(levelname)s] %(name)s %(filename)s:%(lineno)d | %(message)s")
+        formatter = logging.Formatter(
+            "[%(levelname)s] %(asctime)s %(filename)s:%(lineno)d | %(message)s",
+            datefmt="%H:%M:%S"
+        )
 
     handler.setFormatter(formatter)
     logger.handlers = []
     logger.addHandler(handler)
+
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("langchain").setLevel(logging.WARNING)
+    logging.getLogger("langchain_core").setLevel(logging.WARNING)
+    logging.getLogger("langchain_openai").setLevel(logging.WARNING)
+    logging.getLogger("langchain_community").setLevel(logging.WARNING)
+    logging.getLogger("langchain_community.tools").setLevel(logging.WARNING)
+    logging.getLogger("langchain_community.tools.base").setLevel(logging.WARNING)
+    logging.getLogger("langchain_community.tools.base.tool").setLevel(logging.WARNING)
+    logging.getLogger("langchain_community.tools.base.tool.tool").setLevel(logging.WARNING)

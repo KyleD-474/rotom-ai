@@ -299,6 +299,13 @@ System is stable and deterministic.
 - Max-iteration guard and defensive checks around `next_capability`/`arguments`; the loop always terminates and falls back to the last valid result on error.
 - Optional `final_output` lets the continuation decider synthesize a reply while still returning a structured `CapabilityResult` (with a `synthesized` metadata flag).
 
+## Phase 8.5 – Goals-Based Multi-Step (Planned)
+
+- **Plan builder:** One LLM call turns `user_input` into a structured list of **goals** (user-level steps).
+- **Per goal:** Intent classifier (goal + context) → capability + args; run capability; append to **output_data**; **goal checker** (goal + run + result) → satisfied? Repeat until satisfied, then next goal.
+- **Response formatter:** When all goals are satisfied, one LLM call turns `user_input` + `output_data` + goals into the final user-facing response.
+- Replaces the continuation decider’s combined “done? / next capability?” with a split: classifier decides *what to run*, goal checker decides *is this goal done?* See [rotom-api/docs/PHASE8_5_PLAN.md](rotom-api/docs/PHASE8_5_PLAN.md).
+
 ## Phase 9 – Persistent Storage
 
 - Abstract persistence layer

@@ -80,3 +80,9 @@ The service layer still wires `NoOpContinuationDecider()` by default, which alwa
 4. **Document concrete multi-step examples**
    - Add a short section that walks through at least one realistic multi-step scenario (for example, "draft → review → summarize") and shows how the continuation decider chooses `next_capability` and `arguments` at each step.
    - Keep these examples aligned with the actual capabilities registered in the system so they can double as design documentation for future contributors.
+
+---
+
+## Phase 8.5 (Planned)
+
+Phase 8.5 will introduce a **goals-based** multi-step path: plan builder → goals → classifier-per-step + goal checker → output_data → response formatter. That design replaces the continuation decider for the new path. See [PHASE8_5_PLAN.md](PHASE8_5_PLAN.md).

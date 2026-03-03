@@ -11,21 +11,25 @@ This file is what gets run (e.g. by uvicorn). It:
 We do not put business logic here—only wiring and configuration.
 """
 
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
-
-from fastapi import FastAPI, Request
+# Load .env from repo root (parent of rotom-api) so ROTOM_* and OPENAI_* are found
+# when the server is run from rotom-api/ or from Docker with WORKDIR inside rotom-api.
+_env_repo_root = Path(__file__).resolve().parent.parent.parent / ".env"
+load_dotenv(_env_repo_root)
+load_dotenv()  # Also load from cwd if present (e.g. rotom-api/.env)
 
 from app.core.logging_config import setup_logging
-from app.core.context import generate_request_id
-from app.api.routes import router
-
 
 # Configure logging first so anything that runs after this uses our format and level.
 setup_logging()
 
-app = FastAPI(title="Rotom AI System")
+from fastapi import FastAPI, Request
+from app.core.context import generate_request_id
+from app.api.routes import router
+
+app = FastAPI(title="Rotom AI System") # Create the FastAPI app.
 
 
 # This middleware runs on every HTTP request. It generates a unique ID for the request
