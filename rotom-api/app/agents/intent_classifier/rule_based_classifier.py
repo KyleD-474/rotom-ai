@@ -4,7 +4,7 @@ tests and offline dev. Implements the same classify(user_input, context=...)
 signature as LLMIntentClassifier; we simply ignore context so the interface
 stays consistent.
 """
-from app.agents.intent.base_intent_classifier import BaseIntentClassifier
+from app.agents.intent_classifier.base_intent_classifier import BaseIntentClassifier
 from app.core.logger import get_logger
 
 logger = get_logger(__name__, layer="agent", component="intent_classifier")

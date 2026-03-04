@@ -2,8 +2,8 @@
 word_count.py — Word-count capability for testing multi-step flows
 
 Returns the number of words in the given text. Deterministic and fast, so
-continuation tests can chain echo → word_count (or similar) without calling
-an LLM inside a capability. Keeps tests predictable and quick.
+the goals-based flow can chain echo → word_count (or similar) per goal
+without calling an LLM inside a capability. Keeps tests predictable and quick.
 """
 
 from app.capabilities.base_capability import BaseCapability

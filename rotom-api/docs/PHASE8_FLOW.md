@@ -1,6 +1,8 @@
 # Phase 8: Iterative Reasoning Loop — Flow and Diagrams
 
-Phase 8 adds a **bounded multi-step loop** inside RotomCore. After each capability run, the continuation decider is consulted; when it returns `done=False` with `next_capability` and `arguments`, RotomCore runs that capability and repeats until `done=True` or a **max-iteration** limit. The continuation contract is defined in Phase 7; see [PHASE7_FLOW.md](PHASE7_FLOW.md) for the `ContinuationResult` shape and decider interface.
+**Note:** The plan-free continuation loop described here has been **removed** from the codebase. The app now always uses the goals-based flow (Phase 8.5). This document is kept for historical reference.
+
+Phase 8 added a **bounded multi-step loop** inside RotomCore. After each capability run, the continuation decider was consulted; when it returned `done=False` with `next_capability` and `arguments`, RotomCore ran that capability and repeated until `done=True` or a **max-iteration** limit. The continuation contract was defined in Phase 7; see [PHASE7_FLOW.md](PHASE7_FLOW.md) for the `ContinuationResult` shape and decider interface.
 
 ---
 

@@ -9,7 +9,7 @@ receive conversation history when we pass it from RotomCore.
 
 import unittest
 
-from app.agents.intent.llm_intent_classifier import LLMIntentClassifier
+from app.agents.intent_classifier import LLMIntentClassifier
 
 
 class MockLLMClient:

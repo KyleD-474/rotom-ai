@@ -4,22 +4,11 @@ agent_service.py — Service layer: wires dependencies, exposes run()
 The API layer (FastAPI routes) calls AgentService.run(user_input, session_id).
 This class is responsible for *building* all the pieces RotomCore needs—session
 store, session memory (Phase 5), capability registry, LLM client, intent
-classifier, and reference resolver (Phase 6)—and injecting them into RotomCore.
-RotomCore itself creates nothing; it only receives dependencies. That way we
-can test RotomCore with mocks and swap implementations (e.g. different memory
-backend) in one place.
-
-Phase 8: Continuation decider is chosen via ROTOM_CONTINUATION_MODE (env):
-  - "noop" (default): NoOpContinuationDecider — single-step, no extra LLM call.
-  - "llm": LLMContinuationDecider — multi-step reasoning via structured continuation.
-
-Phase 8.5: Multi-step mode is chosen via ROTOM_MULTI_STEP_MODE (env):
-  - "noop" (default): Single-step; no plan builder (Phase 8 continuation path still respects ROTOM_CONTINUATION_MODE).
-  - "goals": Goals-based path: plan_builder + goal_checker + response_formatter; RotomCore uses _handle_goals_based.
-  - "continuation": Use Phase 8 continuation decider (ROTOM_CONTINUATION_MODE still selects noop vs llm).
+classifier, reference resolver (Phase 6), and the goals-based path (plan_builder,
+goal_checker, response_formatter)—and injecting them into RotomCore. RotomCore
+always uses the goals-based flow. RotomCore itself creates nothing; it only
+receives dependencies.
 """
-
-import os
 
 from app.agents.rotom_core import RotomCore
 from app.core.logger import get_logger
@@ -32,9 +21,8 @@ from app.capabilities.word_count import WordCountCapability
 
 # from app.agents.llm.dummy_llm_client import DummyLLMClient
 from app.agents.llm.openai_client import OpenAIClient
-from app.agents.intent.llm_intent_classifier import LLMIntentClassifier
+from app.agents.intent_classifier import LLMIntentClassifier
 from app.agents.reference_resolver import LLMReferenceResolver
-from app.agents.continuation import NoOpContinuationDecider, LLMContinuationDecider
 from app.agents.plan_builder import LLMPlanBuilder
 from app.agents.goal_checker import LLMGoalChecker
 from app.agents.response_formatter import LLMResponseFormatter
@@ -75,37 +63,13 @@ class AgentService:
             llm_client=llm_client,
             tool_metadata=tool_metadata,
         )
-        # Phase 6: Resolver rewrites user message from context before classification.
+        # Phase 6: Resolver rewrites user message from context before building plan.
         reference_resolver = LLMReferenceResolver(llm_client=llm_client)
 
-        # Phase 8.5 vs Phase 8: ROTOM_MULTI_STEP_MODE selects goals-based (8.5) or continuation (8) or single-step.
-        multi_step_mode = os.getenv("ROTOM_MULTI_STEP_MODE", "noop").lower()
-        logger.debug(f"Multi-step mode: {multi_step_mode}")
-        plan_builder = None
-        goal_checker = None
-        response_formatter = None
-        continuation_decider = NoOpContinuationDecider()
-
-        if multi_step_mode == "goals":
-            plan_builder = LLMPlanBuilder(llm_client=llm_client)
-            goal_checker = LLMGoalChecker(llm_client=llm_client)
-            response_formatter = LLMResponseFormatter(llm_client=llm_client)
-            logger.debug("Multi-step mode: goals (Phase 8.5)")
-        else:
-            # Phase 7/8: Continuation decider when not using goals.
-            continuation_mode = os.getenv("ROTOM_CONTINUATION_MODE", "noop").lower()
-            logger.debug(f"Continuation mode: {continuation_mode}")
-            if continuation_mode == "llm":
-                continuation_decider = LLMContinuationDecider(
-                    llm_client=llm_client,
-                    tool_metadata=tool_metadata,
-                )
-                logger.debug("Continuation decider: LLM (Phase 8 multi-step)")
-            elif continuation_mode != "noop":
-                logger.warning(
-                    "Unknown ROTOM_CONTINUATION_MODE; using noop",
-                    extra={"event": "continuation_mode_unknown", "mode": continuation_mode},
-                )
+        # Goals-based path: always wired so RotomCore uses plan → goals → goal_checker → response_formatter.
+        plan_builder = LLMPlanBuilder(llm_client=llm_client)
+        goal_checker = LLMGoalChecker(llm_client=llm_client)
+        response_formatter = LLMResponseFormatter(llm_client=llm_client)
 
         # RotomCore gets everything via constructor—no hidden dependencies.
         self.rotom_core = RotomCore(
@@ -113,11 +77,10 @@ class AgentService:
             registry=registry,
             session_store=session_store,
             session_memory=session_memory,
-            reference_resolver=reference_resolver,
-            continuation_decider=continuation_decider,
             plan_builder=plan_builder,
             goal_checker=goal_checker,
             response_formatter=response_formatter,
+            reference_resolver=reference_resolver,
         )
 
     def run(self, user_input: str, session_id: str | None = None):

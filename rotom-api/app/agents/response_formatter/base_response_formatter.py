@@ -7,7 +7,7 @@ RotomCore uses this as the output of the final CapabilityResult (with synthesize
 """
 
 from abc import ABC, abstractmethod
-from app.models.plan import Plan
+from typing import List
 
 
 class BaseResponseFormatter(ABC):
@@ -18,7 +18,7 @@ class BaseResponseFormatter(ABC):
         self,
         user_input: str,
         output_data: list,
-        goals: Plan,
+        goals: List[str],
     ) -> str:
         """
         Produce the final user-facing response from the collected data.
@@ -26,7 +26,7 @@ class BaseResponseFormatter(ABC):
         Args:
             user_input: The original user message.
             output_data: List of step results (e.g. [{"goal": "...", "capability": "...", "output": "..."}]).
-            goals: The plan (list of goal strings) that was executed.
+            goals: List of goal description strings that were executed (for display).
 
         Returns:
             A single string to return as the CapabilityResult output (synthesized).

@@ -50,12 +50,12 @@ flowchart TD
 ### 1. Plan builder (LLM)
 
 - **Input:** `user_input` (full user message).
-- **Output:** Structured list of **goals**. Each goal is a short description (e.g. “Get word_count of original text”, “Summarize the original text”, “Print the summarization”, “Get word_count of summarized text and print it”).
-- **Contract:** JSON array of goal strings, or list of `{ "description": "..." }`. Parsed once at the start; goals are not revised mid-request in the baseline design (optional replan can be added later).
+- **Output:** Structured list of **steps**. Each step has at least a **goal** (short description); optionally **store_output_as** and **use_from_memory**.
+- **Contract:** JSON array of goal strings and/or objects with "goal", "store_output_as", "use_from_memory". See [PHASE8_5_ARTIFACTS.md](PHASE8_5_ARTIFACTS.md). Parsed once at the start; goals are not revised mid-request in the baseline design (optional replan can be added later).
 
 ### 2. Intent classifier (existing, used per step)
 
-- **Input:** Current **goal** (and optional **context**: last capability result, or a short summary of `output_data`). The “user message” passed to the classifier is the goal text (and context), so the classifier returns the right capability + arguments for this step (e.g. “word_count” with `text` = previous result).
+- **Input:** Current **goal** (and optional **context**). Context always includes original user input; it may include "Content of '<key>' (from a previous step)" when the plan declares **use_from_memory**, or "Previous step result" otherwise. The classifier returns the right capability + arguments (e.g. word_count with text = the injected artifact when use_from_memory is set).
 - **Output:** `{ "capability": string, "arguments": dict }` as today.
 - **Usage:** Called once per capability run (within a goal, possibly multiple times until the goal is satisfied).
 
@@ -73,8 +73,13 @@ flowchart TD
 
 ### 5. Response formatter (LLM)
 
-- **Input:** Original `user_input`, **output_data** (accumulated results), and optionally the list of **goals**.
+- **Input:** Original `user_input`, **output_data** (accumulated results), and the list of **goal strings** (for display).
 - **Output:** A single user-facing response (narrative or structured) that we return as the `output` of the final `CapabilityResult`, with `metadata["synthesized"] = True` (or equivalent).
+
+### 6. Artifact store (request-scoped)
+
+- **Purpose:** Pass prior step outputs to later goals without putting all prior results in every prompt. Used when the plan declares **store_output_as** (producer step) and **use_from_memory** (consumer step).
+- **Lifecycle:** A dict created at the start of the goals loop and used only for that request; no persistence, no explicit clear. See [PHASE8_5_ARTIFACTS.md](PHASE8_5_ARTIFACTS.md).
 
 ---
 

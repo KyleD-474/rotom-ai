@@ -1,60 +1,54 @@
 """
 rotom_core.py — The main orchestrator
 
-RotomCore is the "brain" that: (1) asks the intent classifier which capability
-to run and with what arguments, (2) looks up that capability in the registry,
-(3) validates arguments, (4) runs the capability, (5) handles errors and
-timing. It does NOT construct any of its dependencies—those are injected
-by the service layer.
+RotomCore is the "brain" that orchestrates the goals-based flow: build a plan
+(list of goals), then for each goal run intent classifier(goal, context) →
+capability → goal_checker; accumulate output_data; when all goals satisfied,
+response_formatter produces final output. It does NOT construct any of its
+dependencies—those are injected by the service layer.
 
 Phase 5: When a session_id is present, we read recent conversation from
-session_memory and pass it to the classifier (so it can understand "echo that
-again"). After execution we append this turn (user message + what we ran +
+session_memory. After execution we append this turn (user message + what we ran +
 short result summary) to session_memory for the next request. Capabilities
 never see session or memory—only RotomCore talks to memory.
 
 Phase 6: When session_id and context exist and a reference_resolver is injected,
-we first rewrite the user message (resolve "that", "it", "again" from context),
-then run intent classification on the rewritten message only. We still append
-the original user_input to memory so the stored conversation reflects what the
-user actually said.
+we can rewrite the user message (resolve "that", "it", "again" from context)
+before building the plan. We still append the original user_input to memory.
 
-Phase 7: After a capability runs, we call the continuation_decider (if present)
-with the user message, capability name, and result. It returns a structured
-ContinuationResult (done, next_capability, etc.). Phase 8 uses that to loop.
-
-Phase 8: We loop until the decider returns done=True or we hit
-MAX_CONTINUATION_ITERATIONS. When done=False with next_capability/arguments,
-we run that capability and repeat. Optional final_output replaces the last
-result's output when set.
-
-Phase 8.5: When plan_builder, goal_checker, and response_formatter are all
-injected, we use the goals-based path: build plan (list of goals), then for
-each goal run classifier(goal, context) → capability → goal_checker; accumulate
-output_data; when all goals satisfied, response_formatter produces final output.
+Goal_checker decides per-goal satisfaction (retry or advance); there is no
+plan-free continuation decider—we always use the goals-based path.
 """
-import json
 import time
+from typing import Dict, List, Union
+
 from app.core.logger import get_logger
 from app.models.capability_result import CapabilityResult
+from app.models.plan import Plan, PlanStep, plan_goal_strings
 
 logger = get_logger(__name__, layer="agent", component="rotom_core")
 
 # When we store the capability result in memory we truncate output to avoid huge prompts.
 OUTPUT_SUMMARY_MAX_LEN = 200
 
-# Phase 8: Max capability runs per request; prevents unbounded loops when continuation says "not done".
-MAX_CONTINUATION_ITERATIONS = 5
-
-# Phase 8.5: Max total capability runs across all goals (prevents runaway execution).
+# Max total capability runs across all goals (prevents runaway execution).
 MAX_GOALS_ITERATIONS = 12
+# Max steps per single goal; prevents one goal from burning all iterations (e.g. goal checker never satisfied).
+MAX_STEPS_PER_GOAL = 3
+
+# Max length of an artifact value when injected into classifier context (keeps token cost bounded).
+ARTIFACT_CONTEXT_MAX_LEN = 2000
+
+# Phase 8.5: Truncation limits when building step context for the goals path (keeps token cost bounded).
+GOAL_ORIGINAL_INPUT_MAX_LEN = 3500
+GOAL_PREVIOUS_OUTPUT_MAX_LEN = 1000
 
 
 class RotomCore:
     """
-    Single entry point for "handle this user message": classify intent,
-    resolve capability, validate args, execute, then record the turn in
-    memory if we have a session_id.
+    Single entry point for "handle this user message": session/context, then
+    goals-based flow (build plan → for each goal: classify → execute →
+    goal_checker); record turns in memory when session_id is set.
     """
 
     def __init__(
@@ -63,302 +57,137 @@ class RotomCore:
         registry,
         session_store,
         session_memory,
+        plan_builder,
+        goal_checker,
+        response_formatter,
         reference_resolver=None,
-        continuation_decider=None,
-        plan_builder=None,
-        goal_checker=None,
-        response_formatter=None,
     ):
         logger.info("Rotom Core initialized")
         self.registry = registry
         self.intent_classifier = intent_classifier
         self.session_store = session_store
         self.session_memory = session_memory
-        # Phase 6: Optional. When set, we rewrite user message from context before classifying.
-        self.reference_resolver = reference_resolver
-        # Phase 7: Optional. When set, we call it after every capability run; it returns a structured continuation.
-        self.continuation_decider = continuation_decider
-        # Phase 8.5: When all three are set, we use goals-based multi-step instead of continuation decider.
         self.plan_builder = plan_builder
         self.goal_checker = goal_checker
         self.response_formatter = response_formatter
+        # Phase 6: Optional. When set, we rewrite user message from context before building plan.
+        self.reference_resolver = reference_resolver
 
     def handle(self, user_input: str, session_id: str | None = None):
         """
-        Process one user message: get context from memory (if session), optionally
-        rewrite references (Phase 6), classify intent, run the chosen capability,
-        then write this turn back to memory. Memory always stores the original
-        user_input, not the rewritten message.
+        Process one user message: ensure session exists, get context from memory
+        (if session), then run the goals-based flow. Phase 6 reference resolution
+        runs first when session/context/resolver exist; the resolved message is
+        passed into the goals flow so the plan builder can use session context.
+        Memory and step context always use the original user_input.
         """
         logger.debug("Beginning handle() method.", extra={"user_input_preview": (user_input or "")[:200]})
 
         if session_id:
-            self.session_store.get(session_id)  # ensure session exists
+            self.session_store.get(session_id)  # Ensure session exists
 
-        # Phase 5: Pull recent conversation for this session.
-        context = ""
-        if session_id:
-            context = self.session_memory.get_context(session_id, max_turns=5) or ""
+        # --- Session context and reference resolution ---
+        message_for_plan = self._get_context_and_message_for_classifier(session_id, user_input)
 
-        # Phase 6: Resolve-then-classify. When we have context and a resolver,
-        # rewrite the message first so the classifier sees an explicit message only.
-        message_for_classifier = user_input
-        used_resolver = False
-        if session_id and context.strip() and self.reference_resolver is not None:
-            message_for_classifier = self.reference_resolver.resolve(user_input, context)
-            used_resolver = True
+        # --- Goals-based flow (always) ---
+        return self._handle_goals_based(user_input, session_id, message_for_plan=message_for_plan)
 
-        # Phase 8.5: Goals-based path when plan_builder, goal_checker, and response_formatter are all set.
-        if self.plan_builder is not None and self.goal_checker is not None and self.response_formatter is not None:
-            return self._handle_goals_based(user_input, session_id)
-
-        # Ask classifier: which capability + arguments? When we rewrote, pass
-        # context=None so the classifier prompt stays simple (no reference-resolution rules).
-        classifier_context = None if used_resolver else (context or None)
-        intent_data = self.intent_classifier.classify(
-            message_for_classifier, context=classifier_context
-        )
-       
-        # Defensive contract enforcement
-        if not self._validate_intent_data(intent_data):
-            logger.error(f"IntentClassifier returned invalid invocation structure.\nIntent data:\n{json.dumps(intent_data, indent=4)}")
-            raise ValueError("IntentClassifier returned invalid invocation structure")
-            
-        # Convert structured intent into internal invocation model.
-        capability_name = intent_data["capability"]
-        arguments = intent_data["arguments"]
-
-        # Phase 8: Loop: run capability → continuation → append memory; repeat until done or max iterations.
-        result = None
-        iteration = 0
-        while iteration < MAX_CONTINUATION_ITERATIONS:
-            iteration += 1
-            
-            logger.debug(
-                f"Continuation iteration start:\n"+
-                f"iteration: {iteration}\n"+
-                f"capability: {capability_name}\n"+
-                f"arguments: \n{json.dumps(arguments, indent=4)}\n"
-            )
-
-            capability = self.registry.get(capability_name)
-            if not capability:
-                logger.error(f"Capability not found.\nCapability name: {capability_name}")
-                raise ValueError(f"Capability '{capability_name}' not found")
-
-            self._validate_arguments(capability_name, capability, arguments)
-            logger.debug(f"Arguments validated successfully.\nCapability name: {capability_name}\nArguments:\n{json.dumps(arguments, indent=4)}")
-
-            start_time = time.perf_counter()
-            try:
-                result = capability.execute(arguments)
-            except Exception as e:
-                logger.error(f"Capability execution failed.\nCapability name: {capability_name}\nError: {str(e)}")
-                result = CapabilityResult(
-                    capability=capability_name,
-                    output="",
-                    success=False,
-                    metadata={"error": str(e)},
-                )
-            end_time = time.perf_counter()
-            result.metadata["execution_time_ms"] = round((end_time - start_time) * 1000, 2)
-            result.session_id = session_id
-            # Phase 8: Observability — which iteration this step was, and total so far (updated each iteration).
-            result.metadata["continuation_iteration"] = iteration
-            result.metadata["continuation_total_iterations"] = iteration
-
-            # Phase 7/8: Continuation decider; when present we use its return to loop or apply final_output.
-            cont = None
-            if self.continuation_decider is not None:
-                cont = self.continuation_decider.continue_(user_input, capability_name, result)
-                next_cap = getattr(cont, "next_capability", None)
-                final_out = getattr(cont, "final_output", None)
-                has_final = bool(final_out and (final_out or "").strip() != "")
-                logger.debug(
-                    "Continuation decision from llm continuation decider: iteration=%s done=%s next_capability=%s has_final_output=%s",
-                    iteration,
-                    bool(cont.done),
-                    next_cap,
-                    has_final,
-                )
-            # Phase 5: Append this step to memory. First iteration: user message + assistant; later: assistant only.
-            if session_id:
-                if iteration == 1:
-                    self.session_memory.append(
-                        session_id, {"role": "user", "content": user_input}
-                    )
-                output_summary = (result.output or "")[:OUTPUT_SUMMARY_MAX_LEN]
-                self.session_memory.append(
-                    session_id,
-                    {
-                        "role": "assistant",
-                        "capability": capability_name,
-                        "success": result.success,
-                        "output_summary": output_summary,
-                    },
-                )
-
-            logger.debug(f"Execution finished: {capability_name}")
-
-            # No decider => single-step (Phase 7 default); we're done.
-            if cont is None:
-                return result
-            # Decider says done: optionally surface final_output, then return.
-            if cont.done:
-                if cont.final_output is not None and cont.final_output.strip() != "":
-                    result = CapabilityResult(
-                        capability=result.capability,
-                        output=cont.final_output,
-                        success=result.success,
-                        metadata={**result.metadata, "synthesized": True},
-                        session_id=result.session_id,
-                    )
-                return result
-            # Hit max iterations: return last result.
-            if iteration >= MAX_CONTINUATION_ITERATIONS:
-                logger.warning(
-                    "continuation_max_iterations_reached",
-                    extra={
-                        "event": "continuation_max_iterations_reached",
-                        "iteration": iteration,
-                        "max_iterations": MAX_CONTINUATION_ITERATIONS,
-                        "capability": result.capability,
-                    },
-                )
-                return result
-            # Continuation said not done but next step invalid: stop and return last result.
-            if not cont.next_capability or not isinstance(cont.arguments, dict):
-                logger.warning(
-                    "Continuation returned done=False but missing next_capability or arguments; stopping.",
-                    extra={
-                        "event": "continuation_invalid_next",
-                        "iteration": iteration,
-                        "capability": result.capability,
-                    },
-                )
-                return result
-            next_cap = self.registry.get(cont.next_capability)
-            if not next_cap:
-                logger.warning(
-                    "Continuation next_capability not in registry; stopping.",
-                    extra={
-                        "event": "continuation_unknown_capability",
-                        "iteration": iteration,
-                        "next_capability": cont.next_capability,
-                        "capability": result.capability,
-                    },
-                )
-                return result
-            try:
-                self._validate_arguments(
-                    cont.next_capability, next_cap, cont.arguments
-                )
-            except ValueError:
-                logger.warning(
-                    "Continuation arguments invalid for next capability; stopping.",
-                    extra={
-                        "event": "continuation_invalid_arguments",
-                        "iteration": iteration,
-                        "next_capability": cont.next_capability,
-                        "capability": result.capability,
-                    },
-                )
-                return result
-            capability_name = cont.next_capability
-            arguments = cont.arguments
-
-        return result
-
-    def _handle_goals_based(self, user_input: str, session_id: str | None):
+    def _handle_goals_based(
+        self, user_input: str, session_id: str | None, message_for_plan: str | None = None
+    ):
         """
         Phase 8.5: Build plan (goals), for each goal run classifier → capability → goal_checker,
         accumulate output_data, then response_formatter for final output.
+        When message_for_plan is provided (from reference resolution), the plan is built from it;
+        otherwise the plan is built from user_input. Memory and step context always use user_input.
+        Uses a request-scoped artifact store when steps declare store_output_as / use_from_memory.
         """
-        goals = self.plan_builder.build_plan(user_input)
-        logger.debug("Goals-based plan built", extra={"goals_count": len(goals), "goals": goals})
+        plan_input = message_for_plan if message_for_plan is not None else user_input
+        raw_plan = self.plan_builder.build_plan(plan_input)
+        steps = self._normalize_plan_to_steps(raw_plan)
+        logger.debug("Goals-based plan built", extra={"goals_count": len(steps), "goals": plan_goal_strings(steps)})
 
+        # --- Plan built; iterate over goals ---
         output_data = []
-        total_steps = 0
+        goal_iterations = 0
         first_step_this_request = True
+        artifacts: Dict[str, str] = {}
 
-        for goal_index, goal in enumerate(goals):
-            if total_steps >= MAX_GOALS_ITERATIONS:
+        for goal_index, step in enumerate(steps):
+            if goal_iterations >= MAX_GOALS_ITERATIONS:
                 logger.warning("Phase 8.5 max iterations reached; formatting with partial results")
                 break
+            goal_text = step["goal"]
             satisfied = False
-            while not satisfied and total_steps < MAX_GOALS_ITERATIONS:
-                # Context for classifier: always include original user input so goals like "summarize the text"
-                # can see the text; also include last step result so "word count of the summary" can use it.
-                original_chunk = (user_input or "").strip()[:3500]
-                if not output_data:
-                    step_context = original_chunk
-                else:
-                    last_output = (output_data[-1].get("output") or "").strip()[:1000]
-                    step_context = f"Original user input (use for 'the text' / 'original text' when needed):\n{original_chunk}\n\nPrevious step result:\n{last_output}"
+            steps_this_goal = 0
+            while not satisfied and goal_iterations < MAX_GOALS_ITERATIONS:
+                # Build context for this step (original input + artifacts or previous output)
+                step_context = self._build_goal_step_context(step, user_input, output_data, artifacts)
 
-                intent_data = self.intent_classifier.classify(goal, context=step_context if step_context.strip() else None)
+                # Classify intent for this goal
+                intent_data = self.intent_classifier.classify(goal_text, context=step_context if step_context.strip() else None)
                 if not self._validate_intent_data(intent_data):
-                    logger.warning("Intent classifier returned invalid data for goal; skipping to next goal", extra={"goal": goal})
+                    logger.warning("Intent classifier returned invalid data for goal; skipping to next goal", extra={"goal": goal_text})
                     satisfied = True
                     break
 
                 capability_name = intent_data["capability"]
                 arguments = intent_data["arguments"]
 
+                # Resolve capability and validate arguments
                 capability = self.registry.get(capability_name)
                 if not capability:
-                    logger.warning("Capability not found for goal; skipping to next goal", extra={"goal": goal, "capability": capability_name})
+                    logger.warning("Capability not found for goal; skipping to next goal", extra={"goal": goal_text, "capability": capability_name})
                     satisfied = True
                     break
 
                 try:
                     self._validate_arguments(capability_name, capability, arguments)
                 except ValueError as e:
-                    logger.warning("Invalid arguments for goal; skipping to next goal", extra={"goal": goal, "error": str(e)})
+                    logger.warning("Invalid arguments for goal; skipping to next goal", extra={"goal": goal_text, "error": str(e)})
                     satisfied = True
                     break
 
-                start_time = time.perf_counter()
-                try:
-                    result = capability.execute(arguments)
-                except Exception as e:
-                    logger.error("Capability execution failed in goals path", extra={"capability": capability_name, "error": str(e)})
-                    result = CapabilityResult(
-                        capability=capability_name,
-                        output="",
-                        success=False,
-                        metadata={"error": str(e)},
-                    )
-                end_time = time.perf_counter()
-                result.metadata["execution_time_ms"] = round((end_time - start_time) * 1000, 2)
-                result.session_id = session_id
+                result = self._execute_capability(
+                    capability_name, capability, arguments, session_id
+                )
 
+                # Record output and optional artifact
                 output_data.append({
-                    "goal": goal,
+                    "goal": goal_text,
                     "capability": capability_name,
                     "output": result.output or "",
                     "success": result.success,
                 })
-                total_steps += 1
+                goal_iterations += 1
+                steps_this_goal += 1
 
+                store_key = step.get("store_output_as")
+                if store_key and (k := str(store_key).strip()):
+                    artifacts[k] = result.output or ""
+
+                # Record turn in session memory
                 if session_id:
                     if first_step_this_request:
-                        self.session_memory.append(session_id, {"role": "user", "content": user_input})
+                        self._append_user_turn(session_id, user_input)
                         first_step_this_request = False
-                    out_summary = (result.output or "")[:OUTPUT_SUMMARY_MAX_LEN]
-                    self.session_memory.append(
-                        session_id,
-                        {"role": "assistant", "capability": capability_name, "success": result.success, "output_summary": out_summary},
-                    )
+                    self._append_assistant_turn(session_id, capability_name, result)
 
-                check_result = self.goal_checker.check(goal, capability_name, result)
+                # Check if goal is satisfied
+                check_result = self.goal_checker.check(goal_text, capability_name, result)
                 if check_result.output_snippet:
                     output_data[-1]["snippet"] = check_result.output_snippet
-                if check_result.satisfied:
-                    satisfied = True
-                    logger.debug("Goal satisfied", extra={"goal": goal, "step": total_steps})
+                satisfied = self._is_goal_satisfied(
+                    check_result, steps_this_goal, output_data, goal_text
+                )
+                if satisfied and check_result.satisfied:
+                    logger.debug(
+                        "Goal satisfied",
+                        extra={"goal": goal_text, "step": goal_iterations},
+                    )
 
-        final_output = self.response_formatter.format_response(user_input, output_data, goals)
+        goal_strings = plan_goal_strings(steps)
+        final_output = self.response_formatter.format_response(user_input, output_data, goal_strings)
         last_cap = output_data[-1]["capability"] if output_data else "goals"
         return CapabilityResult(
             capability=last_cap,
@@ -366,11 +195,167 @@ class RotomCore:
             success=bool(output_data),
             metadata={
                 "synthesized": True,
-                "goals_completed": len(goals),
-                "goals_steps": total_steps,
+                "goals_completed": len(steps),
+                "goals_steps": goal_iterations,
             },
             session_id=session_id,
         )
+
+    def _execute_capability(
+        self,
+        capability_name: str,
+        capability,
+        arguments: dict,
+        session_id: str | None,
+    ):
+        """
+        Execute a capability with timing and error handling. Returns a CapabilityResult
+        with execution_time_ms and session_id set.
+        """
+        start_time = time.perf_counter()
+        try:
+            result = capability.execute(arguments)
+        except Exception as e:
+            logger.error(f"Capability execution failed.\nCapability name: {capability_name}\nError: {str(e)}")
+            result = CapabilityResult(
+                capability=capability_name,
+                output="",
+                success=False,
+                metadata={"error": str(e)},
+            )
+        end_time = time.perf_counter()
+        result.metadata["execution_time_ms"] = round((end_time - start_time) * 1000, 2)
+        result.session_id = session_id
+        return result
+
+    def _append_user_turn(self, session_id: str | None, user_input: str) -> None:
+        """Append the user message to session memory for this turn. No-op if session_id is None."""
+        if not session_id:
+            return
+        self.session_memory.append(session_id, {"role": "user", "content": user_input})
+
+    def _append_assistant_turn(
+        self,
+        session_id: str | None,
+        capability_name: str,
+        result,
+    ) -> None:
+        """Append assistant turn (capability name + truncated output summary) to session memory. No-op if session_id is None."""
+        if not session_id:
+            return
+        output_summary = (result.output or "")[:OUTPUT_SUMMARY_MAX_LEN]
+        self.session_memory.append(
+            session_id,
+            {
+                "role": "assistant",
+                "capability": capability_name,
+                "success": result.success,
+                "output_summary": output_summary,
+            },
+        )
+
+    def _get_context_and_message_for_classifier(self, session_id: str | None, user_input: str) -> str:
+        """
+        Return the message to use for the plan. When session_id, context, and
+        reference_resolver are present, returns the resolved message (references
+        like "that"/"it"/"again" expanded from session context); otherwise returns
+        the original user_input. Callers pass this to the plan builder.
+        """
+        logger.debug(f"Getting context and message for plan.\nSession ID: {session_id}\nUser input: {user_input}")
+        context = ""
+        if session_id:
+            context = self.session_memory.get_context(session_id, max_turns=5) or ""
+            logger.debug(f"Context from session memory:\n{context}")
+
+        message_for_plan = user_input
+        if session_id and context.strip() and self.reference_resolver is not None:
+            message_for_plan = self.reference_resolver.resolve(user_input, context)
+            logger.debug(f"Reference resolver used; rewritten message:\n{message_for_plan}")
+        else:
+            logger.debug("No reference resolver used; returning user_input unchanged.")
+
+        return message_for_plan
+
+    def _build_goal_step_context(
+        self,
+        step: PlanStep,
+        user_input: str,
+        output_data: list,
+        artifacts: Dict[str, str],
+    ) -> str:
+        """
+        Build the context string for the intent classifier for one goal step.
+        Uses original input (truncated), optional use_from_memory artifacts, or previous step output.
+        """
+        original_chunk = (user_input or "").strip()[:GOAL_ORIGINAL_INPUT_MAX_LEN]
+        if not output_data:
+            return original_chunk
+        base = f"Original user input (use for 'the text' / 'original text' when needed):\n{original_chunk}"
+        use_keys = step.get("use_from_memory")
+        use_keys_list: List[str] = (
+            [use_keys] if isinstance(use_keys, str) else (use_keys or [])
+        )
+        if use_keys_list:
+            for key in use_keys_list:
+                val = (artifacts.get(key) or "").strip()[:ARTIFACT_CONTEXT_MAX_LEN]
+                base += f"\n\nContent of '{key}' (from a previous step):\n{val}"
+        else:
+            last_output = (
+                (output_data[-1].get("output") or "").strip()[
+                    :GOAL_PREVIOUS_OUTPUT_MAX_LEN
+                ]
+            )
+            base += f"\n\nPrevious step result:\n{last_output}"
+        return base
+
+    def _is_goal_satisfied(
+        self,
+        check_result,
+        steps_this_goal: int,
+        output_data: list,
+        goal_text: str,
+    ) -> bool:
+        """
+        Decide if the current goal is satisfied: checker said so, max steps per goal reached,
+        or duplicate step (same capability and output as previous). Logs for max steps and duplicate.
+        """
+        if check_result.satisfied:
+            return True
+        if steps_this_goal >= MAX_STEPS_PER_GOAL:
+            logger.warning(
+                "Per-goal step limit reached; treating goal as done",
+                extra={"goal": goal_text, "steps_this_goal": steps_this_goal},
+            )
+            return True
+        if steps_this_goal >= 2:
+            last_step = output_data[-1]
+            prev_step = output_data[-2]
+            if (
+                last_step["capability"] == prev_step["capability"]
+                and (last_step.get("output") or "") == (prev_step.get("output") or "")
+            ):
+                logger.warning(
+                    "Duplicate step for goal (same capability and output); treating as done",
+                    extra={"goal": goal_text},
+                )
+                return True
+        return False
+
+    def _normalize_plan_to_steps(self, plan: Union[Plan, List[str]]) -> Plan:
+        """Ensure we have a list of PlanStep (dicts with 'goal'). Accepts list of strings from legacy builders."""
+        steps: List[PlanStep] = []
+        for item in plan or []:
+            if isinstance(item, str) and (s := (item or "").strip()):
+                steps.append({"goal": s})
+            elif isinstance(item, dict) and (item.get("goal") or item.get("description")):
+                goal = (item.get("goal") or item.get("description") or "").strip()
+                step: PlanStep = {"goal": goal}
+                if item.get("store_output_as"):
+                    step["store_output_as"] = str(item["store_output_as"]).strip()
+                if item.get("use_from_memory") is not None:
+                    step["use_from_memory"] = item["use_from_memory"]
+                steps.append(step)
+        return steps
 
     def _validate_intent_data(self, intent_data) -> bool:
         """

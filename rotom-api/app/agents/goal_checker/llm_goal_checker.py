@@ -30,13 +30,12 @@ class LLMGoalChecker(BaseGoalChecker):
         result: CapabilityResult,
     ) -> GoalCheckerResult:
         """Build prompt, call LLM, parse satisfied (and optional output_snippet)."""
-        logger.debug(f"Building prompt for llm goal checker.\nGoal:\n{goal}\nCapability name:\n{capability_name}\nResult:\n{result}")
+        logger.debug(f"Checking goal.")
         prompt = self._build_prompt(goal, capability_name, result)
-        logger.debug(f"Prompt for llm goal checker:\n{prompt}")
+        logger.debug(f"Goal checker prompt:\n{prompt}")
         raw = self.llm_client.generate(prompt)
-        logger.debug(f"Raw output (response) from llm goal checker:\n{raw}")
         parsed = self._parse_response(raw)
-        logger.debug(f"Parsed output (response) from llm goal checker:\n{parsed}")
+        logger.debug(f"Goal checker result:\n{parsed}")
         return parsed
 
     def _build_prompt(
@@ -56,7 +55,7 @@ JSON shape:
 }}
 
 Rules:
-- "satisfied": true only if the goal has been fully accomplished with the capability that ran and its result. false if more steps are needed for this goal.
+- "satisfied": true if the capability that just ran produced a result that fulfills THIS goal as stated. Judge only this goal; do not require other sub-tasks (e.g. word count, summarization) unless they are explicitly part of this goal text. If the capability successfully produced the requested output (e.g. echoed the user request, returned a count), set satisfied to true. Set false only when the result clearly does not yet accomplish this goal and another step is needed.
 - "output_snippet": optional; use if you want to record a short label or value for this goal (e.g. "word_count_original: 146"). Otherwise null.
 
 Current goal: {goal}

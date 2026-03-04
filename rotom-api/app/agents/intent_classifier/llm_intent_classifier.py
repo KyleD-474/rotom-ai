@@ -11,7 +11,7 @@ maps that explicit message to capability + args—no reference-resolution rules
 in the prompt. This keeps the classifier simple and scalable.
 """
 import json
-from app.agents.intent.base_intent_classifier import BaseIntentClassifier
+from app.agents.intent_classifier.base_intent_classifier import BaseIntentClassifier
 from app.agents.llm.base_llm_client import BaseLLMClient
 from app.core.logger import get_logger
 
@@ -37,19 +37,14 @@ class LLMIntentClassifier(BaseIntentClassifier):
         Build a prompt (including context if provided), call the LLM, then
         parse and validate the JSON response. Returns {"capability": str, "arguments": dict}.
         """
-        logger.debug(f"Classifying intent for user input.\nUser input:\n{user_input}\nContext:\n{context} \nTool metadata:\n{json.dumps(self.tool_metadata, indent=2)}")
-
+        logger.debug(f"Classifying intent.")
         prompt = self._build_prompt(user_input, context=context)
         logger.debug(f"Prompt for llm intent classification:\n{prompt}")
         raw_output = self.llm_client.generate(prompt)
-        logger.debug(f"Raw output (response) from llm intent classification:\n{raw_output}")
 
         try:
             parsed = json.loads(raw_output)
-            logger.debug(f"Parsed output (response) from llm intent classification:\n{json.dumps(parsed, indent=2)}")
-
             capability = parsed.get("capability")
-            logger.debug(f"Capability (response)from llm intent classification:\n{capability}")
 
             if not isinstance(capability, str) or not capability.strip():
                 raise ValueError("'capability' must be a non-empty string")
@@ -66,6 +61,8 @@ class LLMIntentClassifier(BaseIntentClassifier):
                 logger.error(f"Invalid arguments returned by LLM: {arguments}")
                 raise ValueError("'arguments' must be a JSON object")
 
+            logger.debug(f"Capability (response) from llm intent classification: {capability}")
+            logger.debug(f"Arguments (response) from llm intent classification: {arguments}")
             return {"capability": capability, "arguments": arguments}
 
         except Exception as e:

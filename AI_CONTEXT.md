@@ -16,7 +16,7 @@ Rotom is not a chatbot. It is not an uncontrolled agent. It is an **AI orchestra
 For concrete use cases (trip planning, research, developer automation, browser automation, workflows, etc.), see **USECASES.md**.
 
 Execution is currently:
-- Single-request, **bounded multi-step** (iterative loop inside RotomCore using Phase 7/8 continuation contract)
+- Single-request, **bounded multi-step** (goals-based flow inside RotomCore: plan → goals → goal_checker → response_formatter)
 - Synchronous
 - Deterministic
 - Stateless at capability layer
@@ -138,20 +138,16 @@ Execution Flow (single request, possibly multi-step, always bounded):
 
 1. Receive input.
 2. (Phase 5) Load recent session context for this session (if any) from session memory.
-3. (Phase 6, when session + context) Optionally rewrite user message via reference resolver so references (“that”, “it”, “again”) are resolved; classifier then receives **rewritten** message only.
-4. LLM classifies intent once → structured `{capability, arguments}`.
-5. Enter a bounded loop inside RotomCore (Phase 8):
-   - 5.1 Resolve capability from registry.
-   - 5.2 Validate invocation structure and arguments (Phase 4).
-   - 5.3 Execute capability with arguments; catch failures and wrap in `CapabilityResult`.
-   - 5.4 Inject execution timing and session_id into metadata.
-   - 5.5 Call continuation decider (Phase 7) with user input, capability name, and result → `ContinuationResult(done, next_capability, arguments, final_output)`.
-   - 5.6 Append this step to session memory (user message once on first iteration, assistant summary on every iteration).
-   - 5.7 If `done=True`, or max-iteration guard reached, or next step is invalid → exit loop.
-   - 5.8 Otherwise, set `capability = next_capability` and `arguments = arguments` from `ContinuationResult` and repeat.
-6. If the final `ContinuationResult` provides a non-empty `final_output`, we surface that as the returned `CapabilityResult.output` and mark metadata with `synthesized=True`; otherwise we return the last capability’s raw output.
+3. (Phase 6, when session + context) Optionally rewrite user message via reference resolver so references (“that”, “it”, “again”) are resolved.
+4. **Goals-based flow (always):** Build plan (list of goals) via plan_builder. For each goal:
+   - 4.1 Build step context (original input, artifacts or previous output).
+   - 4.2 LLM classifies intent for this goal → `{capability, arguments}`.
+   - 4.3 Resolve capability, validate arguments, execute; inject timing and session_id.
+   - 4.4 Append this step to session memory (user message once per request, assistant summary per step).
+   - 4.5 Goal checker decides if goal is satisfied; if not, retry until satisfied or per-goal/max-iteration limits.
+5. Response formatter produces final `CapabilityResult.output` from accumulated output_data; metadata includes `synthesized=True`.
 
-Multi-step reasoning is **bounded and explicit**: no unbounded loops, no hidden capability chaining.
+Multi-step reasoning is **bounded and explicit**: no unbounded loops; goal_checker decides per-goal satisfaction.
 
 ---
 
@@ -186,7 +182,7 @@ Multi-step reasoning is **bounded and explicit**: no unbounded loops, no hidden 
 - BaseCapability (base_capability.py)
 - BaseSessionMemory (base_session_memory.py, Phase 5)
 - BaseReferenceResolver (base_reference_resolver.py, Phase 6)
-- BaseContinuationDecider (base_continuation_decider.py, Phase 7)
+- Plan builder, goal checker, and response formatter (goals-based path)
 
 Base interfaces live in descriptively named modules (base_*.py). Concrete implementations are swappable.
 
@@ -220,7 +216,7 @@ LLMIntentClassifier builds prompt dynamically from:
 
 Prevents argument drift (e.g., "text" vs "message").
 
-## 5.6 Response Shaping (Principle for Phase 7+)
+## 5.6 Response Shaping
 
 User-facing response shaping (e.g. summarization, conversational formatting) is **optional and capability-driven**, not a global post-step. A summarizer capability is invoked when the user asks for a summary; echo returns literal output. We do not mandate that every capability result be passed through the LLM for “human-readable” polish—that would reduce control and determinism.
 
@@ -241,8 +237,7 @@ Completed:
 - Argument validation layer (Phase 4): validate arguments against capability argument_schema before execution; required keys and no extra keys enforced
 - Session memory utilization (Phase 5): contextual memory injection, abstract BaseSessionMemory interface, intent classifier receives optional context, RotomCore reads context and appends turn summaries; capabilities do not access session or memory
 - Reference resolution (Phase 6): optional preprocessing via BaseReferenceResolver / LLMReferenceResolver; when session context exists, user message is rewritten to resolve references (“that”, “it”, “again”) before intent classification; classifier runs on rewritten message only; memory stores original user message
-- Tool result injection (Phase 7): continuation decider receives `CapabilityResult` and returns structured `ContinuationResult(done, next_capability, arguments, final_output)`; by default NoOpDecider says `done=True` with no next step.
-- Iterative reasoning loop (Phase 8): RotomCore consumes the Phase 7 continuation contract in a bounded loop (max-iteration guard) to support multi-step reasoning within a single request; optional `final_output` lets the decider synthesize a reply while preserving deterministic control.
+- Goals-based multi-step (Phase 8.5): plan builder, per-goal intent classifier and goal checker, response formatter; single path with no plan-free continuation decider; bounded by max-iteration and per-goal limits.
 
 System is stable and deterministic.
 
@@ -286,25 +281,20 @@ System is stable and deterministic.
 - Still single-step execution; only the input to the classifier changes.
 - **Implemented:** Reference resolver in agent layer; RotomCore orchestrates resolve-then-classify when session + context + resolver present; original user message stored in memory.
 
-## Phase 7 – Tool Result Injection (Structured Reasoning Continuation) ✓
+## Phase 7 – Tool Result Injection (Removed)
 
-- **Scope:** Inject capability result into the LLM only when orchestration needs **reasoning or continuation** (e.g. “what do we do next?”, “combine these results”). Default behaviour: return the capability’s output as the response; no mandatory LLM pass for “conversational polish.”
-- **Structured continuation:** When the LLM sees the result, it returns a **structured object** (e.g. `done`, `next_capability`, `arguments`, optional `final_output`), not free-form text. This keeps control and parseability; the pipeline uses the last capability result as the response unless the continuation explicitly provides a synthesized output.
-- **Contract for looping:** Phase 7 defines the continuation contract (result in → structured decision out). Phase 8 is the loop that consumes it (run until `done` or max iterations).
-- Still bounded execution; no automatic rewriting of every capability output.
+- The continuation decider and plan-free reactive loop (Phase 7/8) have been **removed** in favor of the goals-based flow. See Phase 8.5 below. Historical docs: rotom-api/docs/PHASE7_FLOW.md, PHASE8_FLOW.md.
 
-## Phase 8 – Iterative Reasoning Loop ✓
+## Phase 8 – Iterative Reasoning Loop (Removed)
 
-- Multi-step planning using the **Phase 7 continuation contract**: after each capability run, result is injected; LLM returns structured continuation (`done` / `next_capability`); RotomCore loops until `done` or a max-iteration guard.
-- Max-iteration guard and defensive checks around `next_capability`/`arguments`; the loop always terminates and falls back to the last valid result on error.
-- Optional `final_output` lets the continuation decider synthesize a reply while still returning a structured `CapabilityResult` (with a `synthesized` metadata flag).
+- The plan-free continuation loop has been **removed**. Multi-step behavior is now entirely goals-based (Phase 8.5).
 
-## Phase 8.5 – Goals-Based Multi-Step (Planned)
+## Phase 8.5 – Goals-Based Multi-Step ✓
 
 - **Plan builder:** One LLM call turns `user_input` into a structured list of **goals** (user-level steps).
 - **Per goal:** Intent classifier (goal + context) → capability + args; run capability; append to **output_data**; **goal checker** (goal + run + result) → satisfied? Repeat until satisfied, then next goal.
 - **Response formatter:** When all goals are satisfied, one LLM call turns `user_input` + `output_data` + goals into the final user-facing response.
-- Replaces the continuation decider’s combined “done? / next capability?” with a split: classifier decides *what to run*, goal checker decides *is this goal done?* See [rotom-api/docs/PHASE8_5_PLAN.md](rotom-api/docs/PHASE8_5_PLAN.md).
+- This is the **single path**; goal_checker decides per-goal satisfaction. See [rotom-api/docs/PHASE8_5_PLAN.md](rotom-api/docs/PHASE8_5_PLAN.md).
 
 ## Phase 9 – Persistent Storage
 

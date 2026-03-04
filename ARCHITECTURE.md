@@ -38,9 +38,9 @@ For intended use cases (trip planning, research, developer automation, browser a
 LLM-based intent classification was introduced in v1.1.
 Structured invocation (capability + arguments) was introduced in v1.2.
 Metadata-driven prompt construction was introduced in v1.3.
-Argument validation before execution was introduced in v1.4. Session memory (context injection and turn storage) was introduced in v1.5. Reference resolution (resolve-then-classify) was introduced in v1.6. Tool result injection (continuation contract) was introduced in Phase 7. A bounded iterative reasoning loop (multi-step within one request) was introduced in Phase 8.
+Argument validation before execution was introduced in v1.4. Session memory (context injection and turn storage) was introduced in v1.5. Reference resolution (resolve-then-classify) was introduced in v1.6. Goals-based multi-step (Phase 8.5) is the single path: plan → goals → intent classifier per goal → capability → goal_checker → response_formatter; iteration limits are enforced inside RotomCore.
 
-Execution is now **single-request, bounded multi-step** and deterministic; bounded loops and iteration limits are enforced inside RotomCore.
+Execution is **single-request, bounded multi-step** and deterministic; bounded loops and iteration limits are enforced inside RotomCore.
 
 Orchestration-level AI determines routing decisions.
 Execution remains bounded and controlled by RotomCore.
@@ -103,7 +103,7 @@ Contains:
 - Intent classification abstractions (base_intent_classifier.py)
 - LLM client abstractions (base_llm_client.py)
 - Reference resolver abstractions (base_reference_resolver.py, Phase 6)
-- Continuation decider abstractions (base_continuation_decider.py, Phase 7)
+- Plan builder, goal checker, and response formatter (goals-based path)
 
 Responsibilities of RotomCore:
 - Orchestration
@@ -242,20 +242,16 @@ Execution flow (single request, possibly multi-step, always bounded):
 1. Receive input.
 2. If `session_id` is present, ensure the session exists via `SessionStore`.
 3. Load recent context from `SessionMemory` for this session (Phase 5).
-4. (Phase 6, when session and context and resolver) Optionally rewrite user message via reference resolver; classifier then receives the **rewritten** message only.
-5. LLM classifies intent via metadata-driven structured JSON → `{capability, arguments}` for the **first** step.
-6. Enter a bounded loop inside RotomCore (Phase 8):
-   - 6.1 Resolve capability against registry.
-   - 6.2 Construct `CapabilityInvocation` and validate arguments against `argument_schema` (Phase 4).
-   - 6.3 Execute capability with structured arguments; catch unhandled exceptions and wrap in `CapabilityResult`.
-   - 6.4 Inject execution timing into metadata and attach `session_id`.
-   - 6.5 If a continuation decider is configured (Phase 7), call `continue_(user_input, capability_name, result)` and receive `ContinuationResult(done, next_capability, arguments, final_output)`.
-   - 6.6 Append this step to `SessionMemory` (user turn once on first iteration, assistant summary per iteration).
-   - 6.7 If there is **no** decider, or `done=True`, or max-iteration guard reached, or the next step is invalid (missing/unknown `next_capability` or invalid `arguments`) → exit loop.
-   - 6.8 Otherwise, set `capability = next_capability` and `arguments = arguments` from `ContinuationResult` and repeat from 6.1.
-7. If the final `ContinuationResult` provides a non-empty `final_output`, surface that as the returned `CapabilityResult.output` and mark metadata with `synthesized=True`; otherwise, return the last capability's own output.
+4. (Phase 6, when session and context and resolver) Optionally rewrite user message via reference resolver.
+5. **Goals-based flow (always):** Build plan (list of goals) via plan_builder. For each goal:
+   - 5.1 Build step context (original input, artifacts or previous output).
+   - 5.2 LLM classifies intent for this goal → `{capability, arguments}`.
+   - 5.3 Resolve capability, validate arguments, execute; inject timing and attach `session_id`.
+   - 5.4 Append this step to `SessionMemory` (user turn once per request, assistant summary per step).
+   - 5.5 Goal checker decides if goal is satisfied; if not, retry (same goal, new context) until satisfied or per-goal/max-iteration limits.
+6. Response formatter produces final `CapabilityResult.output` from accumulated output_data; metadata includes `synthesized=True`.
 
-Execution remains synchronous and deterministic; multi-step behavior is explicit, structured, and guarded by a max-iteration limit.
+Execution remains synchronous and deterministic; multi-step behavior is explicit, structured, and guarded by max-iteration and per-goal limits.
 
 ---
 
@@ -303,17 +299,15 @@ LLM integration must:
 
 Current state:
 
-- LLM is used for intent classification, reference resolution (Phase 6), and structured continuation decisions (Phase 7).
+- LLM is used for intent classification (per goal), reference resolution (Phase 6), plan building, goal checking, and response formatting.
 - Prompt construction is metadata-driven via CapabilityRegistry.
 - Structured JSON responses are enforced.
 - Defensive validation occurs prior to execution.
 - Capability-level LLM usage is permitted if injected and bounded.
-- A bounded iterative reasoning loop exists inside RotomCore (Phase 8) that consumes the continuation contract and enforces a max-iteration guard.
-- No autonomous, unbounded execution exists; all loops are capped and driven by structured continuation.
+- A bounded goals-based loop exists inside RotomCore: plan → per-goal classify/execute/goal_checker; all loops are capped by max-iteration and per-goal limits.
+- No autonomous, unbounded execution exists.
 
 LLM usage remains strictly bounded by RotomCore orchestration.
-
-When tool result injection is introduced (Phase 7), the LLM will receive capability results only for **structured reasoning continuation** (e.g. next-step decision, synthesis). The continuation response will be **structured** (e.g. done, next_capability, arguments), not free-form. Default response to the user remains the capability output unless the continuation contract explicitly provides a synthesized output.
 
 ---
 
@@ -325,12 +319,9 @@ Implemented:
 - Argument validation layer (v1.4)
 - Session memory utilization (v1.5): context for intent classification, turn summaries per session
 - Reference resolution (v1.6): optional rewrite of user message from session context before intent classification (resolve-then-classify)
-- Tool result injection (Phase 7): continuation decider receives `CapabilityResult` and returns structured `ContinuationResult(done, next_capability, arguments, final_output)`; default decider is a no-op that always says `done=True`.
-- Iterative reasoning loop (Phase 8): bounded loop inside RotomCore that consumes the Phase 7 continuation contract, supports multi-step capability chaining within a single request, and enforces a max-iteration guard.
+- **Goals-based multi-step (Phase 8.5):** Plan builder (user_input → list of goals); per-goal loop with intent classifier (goal + context → capability + args) and goal checker (goal + run + result → satisfied?); accumulated output_data; response formatter for final user reply. This is the single path; no plan-free continuation decider. See rotom-api/docs/PHASE8_5_PLAN.md.
 
 Planned:
-
-- **Phase 8.5 – Goals-based multi-step:** Plan builder (user_input → list of goals); per-goal loop with intent classifier (goal + context → capability + args) and goal checker (goal + run + result → satisfied?); accumulated output_data; response formatter for final user reply. Replaces continuation decider for the goals-based path. See rotom-api/docs/PHASE8_5_PLAN.md.
 - **Response shaping:** User-facing “human-readable” or conversational response is **optional and capability-driven** (e.g. summarizer capability when user asks for summary), not a global LLM pass over every result.
 - Persistent session memory
 - Multi-step capability chaining
@@ -354,7 +345,7 @@ Not currently planned:
 - Session logic remains centralized.
 - All integrations are abstracted.
 - No premature complexity.
-- **No automatic LLM rewriting of every capability output** — Default is to return capability output as the response; the LLM does not automatically rewrite or polish every result for tone or readability. When result injection is used (e.g. Phase 7), the LLM returns a structured continuation, not free-form user-facing text unless explicitly part of the continuation contract.
+- **No automatic LLM rewriting of every capability output** — The response formatter may synthesize a final reply from output_data; capabilities’ raw output is used within the goals path and the formatter produces the user-facing response.
 
 ---
 

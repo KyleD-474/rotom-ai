@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 from app.agents.rotom_core import RotomCore
 from app.capabilities.registry import CapabilityRegistry
+from app.models.plan import plan_goal_strings
 
 
 class TestPhase85GoalsBased(unittest.TestCase):
@@ -86,25 +87,42 @@ class TestPhase85GoalsBased(unittest.TestCase):
         self.assertEqual(result.metadata.get("goals_steps"), 2)
         self.assertEqual(result.metadata.get("goals_completed"), 2)
 
-    def test_goals_path_without_plan_builder_uses_phase8(self):
-        """When plan_builder is None, handle() uses the Phase 8 path (classifier on user message once)."""
-        rotom_single = RotomCore(
-            intent_classifier=self.intent_classifier,
-            registry=self.registry,
-            session_store=self.session_store,
-            session_memory=self.session_memory,
-            plan_builder=None,
-            goal_checker=None,
-            response_formatter=None,
-        )
-        self.intent_classifier.classify.return_value = {"capability": "echo", "arguments": {"message": "hi"}}
+    def test_goals_path_use_from_memory_injects_artifact_into_context(self):
+        """When a step has use_from_memory, the classifier receives context with that artifact's content."""
+        # SummarizerStub with no LLM returns this format. First step stores it; second step's context must contain it.
+        stub_summary = "[SUMMARY PLACEHOLDER]: Long original paragraph here."
+        self.plan_builder.build_plan.return_value = [
+            {"goal": "summarize original text", "store_output_as": "summarized_text"},
+            {"goal": "get word count of summarized text", "use_from_memory": "summarized_text"},
+        ]
+        self.intent_classifier.classify.side_effect = [
+            {"capability": "summarizer_stub", "arguments": {"text": "Long original paragraph here."}},
+            {"capability": "word_count", "arguments": {"text": stub_summary}},
+        ]
+        self.goal_checker.check.return_value = MagicMock(satisfied=True, output_snippet=None)
+        self.response_formatter.format_response.return_value = "Summary word count: 6."
 
-        result = rotom_single.handle("echo hi", session_id="s1")
+        result = self.rotom.handle("Summarize the text then count words in the summary", session_id="s1")
 
-        self.intent_classifier.classify.assert_called_once()
-        self.assertEqual(result.capability, "echo")
-        self.assertEqual(result.output, "hi")
-        self.assertFalse(result.metadata.get("synthesized"))
+        self.assertEqual(self.intent_classifier.classify.call_count, 2)
+        second_call_context = self.intent_classifier.classify.call_args_list[1][1]["context"]
+        self.assertIn("summarized_text", second_call_context)
+        self.assertIn(stub_summary, second_call_context)
+        output_data = self.response_formatter.format_response.call_args[0][1]
+        self.assertEqual(output_data[1]["capability"], "word_count")
+        self.assertEqual(output_data[1]["output"], "6")
+        self.assertTrue(result.success)
+
+
+class TestPlanGoalStrings(unittest.TestCase):
+    """plan_goal_strings() returns list of goal strings from a Plan."""
+
+    def test_returns_goal_strings_from_plan(self):
+        plan = [
+            {"goal": "First goal"},
+            {"goal": "Second goal", "store_output_as": "x"},
+        ]
+        self.assertEqual(plan_goal_strings(plan), ["First goal", "Second goal"])
 
 
 class TestLLMPlanBuilder(unittest.TestCase):
@@ -116,19 +134,41 @@ class TestLLMPlanBuilder(unittest.TestCase):
         self.builder = LLMPlanBuilder(llm_client=self.llm_client)
 
     def test_parses_json_array_of_goals(self):
+        """Plain goal strings become PlanStep dicts with only 'goal' set."""
         self.llm_client.generate.return_value = '["Goal one", "Goal two", "Goal three"]'
         plan = self.builder.build_plan("Do A, B, and C")
-        self.assertEqual(plan, ["Goal one", "Goal two", "Goal three"])
+        self.assertEqual(len(plan), 3)
+        self.assertEqual(plan[0]["goal"], "Goal one")
+        self.assertEqual(plan[1]["goal"], "Goal two")
+        self.assertEqual(plan[2]["goal"], "Goal three")
 
     def test_invalid_json_fallback_to_single_goal(self):
         self.llm_client.generate.return_value = "not json"
         plan = self.builder.build_plan("User request")
-        self.assertEqual(plan, ["User request"])
+        self.assertEqual(len(plan), 1)
+        self.assertEqual(plan[0]["goal"], "User request")
 
     def test_empty_list_fallback_to_single_goal(self):
         self.llm_client.generate.return_value = "[]"
         plan = self.builder.build_plan("User request")
-        self.assertEqual(plan, ["User request"])
+        self.assertEqual(len(plan), 1)
+        self.assertEqual(plan[0]["goal"], "User request")
+
+    def test_parses_objects_with_store_output_as_and_use_from_memory(self):
+        """Plan builder parses step objects with store_output_as and use_from_memory."""
+        self.llm_client.generate.return_value = '''[
+            "get word count of original text",
+            {"goal": "summarize original text", "store_output_as": "summarized_text"},
+            {"goal": "get word count of summarized text", "use_from_memory": "summarized_text"}
+        ]'''
+        plan = self.builder.build_plan("Count, summarize, count summary")
+        self.assertEqual(len(plan), 3)
+        self.assertEqual(plan[0]["goal"], "get word count of original text")
+        self.assertNotIn("store_output_as", plan[0])
+        self.assertEqual(plan[1]["goal"], "summarize original text")
+        self.assertEqual(plan[1]["store_output_as"], "summarized_text")
+        self.assertEqual(plan[2]["goal"], "get word count of summarized text")
+        self.assertEqual(plan[2]["use_from_memory"], "summarized_text")
 
 
 class TestLLMGoalChecker(unittest.TestCase):

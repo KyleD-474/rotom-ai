@@ -1,6 +1,8 @@
 # Phase 7: Tool Result Injection — Flow and Diagrams
 
-This document explains the new continuation step and how it fits into the request flow. Phase 7 adds a **continuation decider** that runs after every capability execution; by default it is a no-op so the user still receives the capability output unchanged.
+**Note:** The continuation decider and plan-free reactive path described here have been **removed** from the codebase. The app now always uses the goals-based flow (Phase 8.5). This document is kept for historical reference.
+
+This document explained the continuation step and how it fit into the request flow. Phase 7 added a **continuation decider** that ran after every capability execution; by default it was a no-op so the user still received the capability output unchanged.
 
 ---
 

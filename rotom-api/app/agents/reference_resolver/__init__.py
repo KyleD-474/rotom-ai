@@ -8,6 +8,6 @@ inject into RotomCore.
 """
 
 from app.agents.reference_resolver.base_reference_resolver import BaseReferenceResolver
-from app.agents.reference_resolver.llm_resolver import LLMReferenceResolver
+from app.agents.reference_resolver.llm_reference_resolver import LLMReferenceResolver
 
 __all__ = ["BaseReferenceResolver", "LLMReferenceResolver"]

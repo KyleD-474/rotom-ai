@@ -6,11 +6,12 @@ a single user-facing response string. RotomCore uses this as the final
 CapabilityResult output (synthesized).
 """
 
+import json
+from typing import List
+
 from app.agents.response_formatter.base_response_formatter import BaseResponseFormatter
 from app.agents.llm.base_llm_client import BaseLLMClient
-from app.models.plan import Plan
 from app.core.logger import get_logger
-import json
 
 logger = get_logger(__name__, layer="agent", component="response_formatter")
 
@@ -27,22 +28,18 @@ class LLMResponseFormatter(BaseResponseFormatter):
         self,
         user_input: str,
         output_data: list,
-        goals: Plan,
+        goals: List[str],
     ) -> str:
         """Build prompt with user_input, output_data, goals; return LLM response as the final output."""
-        logger.debug(f"Building prompt for llm response formatter.\nUser input:\n{user_input}\nOutput data:\n{json.dumps(output_data, indent=2)}\nGoals:\n{json.dumps(goals, indent=2)}")
-        
+        logger.debug(f"Formatting response.")
         prompt = self._build_prompt(user_input, output_data, goals)
         logger.debug(f"Prompt for llm response formatter:\n{prompt}")
-        
-        raw = self.llm_client.generate(prompt)
-        logger.debug(f"Raw output (response) from llm response formatter:\n{raw}")
-        
+        raw = self.llm_client.generate(prompt)        
         formatted_response = (raw or "").strip() or "No response generated."
         logger.debug(f"Formatted response from llm response formatter:\n{formatted_response}")
         return formatted_response
 
-    def _build_prompt(self, user_input: str, output_data: list, goals: Plan) -> str:
+    def _build_prompt(self, user_input: str, output_data: list, goals: List[str]) -> str:
         """Ask the LLM to produce a clear, user-facing response from the data."""
         data_str = json.dumps(output_data, indent=2)
         if len(data_str) > OUTPUT_DATA_TRUNCATE:
